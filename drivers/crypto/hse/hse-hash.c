@@ -133,13 +133,11 @@ static void hse_ahash_done(void *mu_inst, u8 channel, void *req)
 	unsigned int input_len, blocksize = crypto_ahash_blocksize(tfm);
 	u8 access_mode;
 	int err;
-	u32 reply;
 
-	err = hse_mu_recv_response(mu_inst, channel, &reply);
-	err = err ? err : hse_err_decode(reply);
+	err = hse_mu_recv_response(mu_inst, channel);
 	if (unlikely(err))
-		dev_dbg(halg->dev, "%s: service response 0x%08X on channel %d\n",
-			__func__, reply, channel);
+		dev_dbg(halg->dev, "%s: hash/hmac request failed: %d\n",
+			__func__, err);
 
 	switch (halg->srv_id) {
 	case HSE_SRV_ID_HASH:
@@ -157,7 +155,7 @@ static void hse_ahash_done(void *mu_inst, u8 channel, void *req)
 	}
 
 	if (access_mode == HSE_ACCESS_MODE_FINISH && !err)
-		hse_mu_release_channel(halg->mu_inst, ctx->stream);
+		hse_mu_release_stream(halg->mu_inst, ctx->stream);
 
 	if (input_len > blocksize)
 		kfree(ctx->dyn_buf);
@@ -244,7 +242,7 @@ static int hse_ahash_update(struct ahash_request *req)
 		access_mode = HSE_ACCESS_MODE_START;
 		ctx->start_pending = false;
 
-		err = hse_mu_reserve_channel(halg->mu_inst, &ctx->stream, true);
+		err = hse_mu_acquire_stream(halg->mu_inst, &ctx->stream);
 		if (unlikely(err))
 			goto err_free_buf;
 	} else {
@@ -283,7 +281,7 @@ static int hse_ahash_update(struct ahash_request *req)
 	return -EINPROGRESS;
 err_release_channel:
 	if (access_mode == HSE_ACCESS_MODE_START)
-		hse_mu_release_channel(halg->mu_inst, ctx->stream);
+		hse_mu_release_stream(halg->mu_inst, ctx->stream);
 err_free_buf:
 	kfree(ctx->dyn_buf);
 	return err;
@@ -501,7 +499,6 @@ static int hse_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
 	struct hse_halg *halg = hse_get_halg(tfm);
 	u32 srv_desc_addr = lower_32_bits(hse_addr(&state->srv_desc));
 	unsigned int blocksize = crypto_ahash_blocksize(tfm);
-	u32 reply;
 	int err;
 
 	/* do not update the key if already imported */
@@ -523,11 +520,10 @@ static int hse_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
 		state->srv_desc.hash_req.hash = hse_addr(state->keybuf);
 
 		err = hse_mu_request_srv(halg->mu_inst, HSE_ANY_CHANNEL,
-					 srv_desc_addr, &reply);
-		err = err ? err : hse_err_decode(reply);
+					 srv_desc_addr);
 		if (unlikely(err)) {
-			dev_dbg(halg->dev, "%s: hash service response 0x%08X\n",
-				__func__, reply);
+			dev_dbg(halg->dev, "%s: key hash request failed: %d\n",
+				__func__, err);
 			return err;
 		}
 
@@ -553,11 +549,10 @@ static int hse_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
 	state->srv_desc.import_key_req.auth_key = HSE_INVALID_KEY_HANDLE;
 
 	err = hse_mu_request_srv(halg->mu_inst, HSE_ANY_CHANNEL,
-				 srv_desc_addr, &reply);
-	err = err ? err : hse_err_decode(reply);
+				 srv_desc_addr);
 	if (unlikely(err))
-		dev_dbg(halg->dev, "%s: key import service response 0x%08X\n",
-			__func__, reply);
+		dev_dbg(halg->dev, "%s: key import request failed: %d\n",
+			__func__, err);
 
 	return err;
 }
