@@ -136,6 +136,13 @@ static const struct fec_devinfo fec_imx6ul_info = {
 		  FEC_QUIRK_HAS_COALESCE,
 };
 
+static const struct fec_devinfo fec_s32v234_info = {
+	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
+		  FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
+		  FEC_QUIRK_HAS_VLAN | FEC_QUIRK_HAS_AVB |
+		  FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE,
+};
+
 static struct platform_device_id fec_devtype[] = {
 	{
 		/* keep it for coldfire */
@@ -162,6 +169,9 @@ static struct platform_device_id fec_devtype[] = {
 	}, {
 		.name = "imx6ul-fec",
 		.driver_data = (kernel_ulong_t)&fec_imx6ul_info,
+	}, {
+		.name = "s32v234-fec",
+		.driver_data = (kernel_ulong_t)&fec_s32v234_info,
 	}, {
 		/* sentinel */
 	}
