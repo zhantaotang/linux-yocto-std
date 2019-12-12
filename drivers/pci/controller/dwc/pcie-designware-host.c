@@ -551,7 +551,7 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 		}
 	}
 
-#ifndef CONFIG_PCI_S32GEN1
+#if !defined(CONFIG_PCI_S32GEN1) && !defined(CONFIG_PCI_S32V234) 
 	dw_pcie_msi_init(pp);
 #endif
 
