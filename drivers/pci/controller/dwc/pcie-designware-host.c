@@ -551,7 +551,9 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 		}
 	}
 
+#ifndef CONFIG_PCI_S32GEN1
 	dw_pcie_msi_init(pp);
+#endif
 
 	/* Setup RC BARs */
 	dw_pcie_writel_dbi(pci, PCI_BASE_ADDRESS_0, 0x00000004);
