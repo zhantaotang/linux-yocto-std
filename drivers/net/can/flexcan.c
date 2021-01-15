@@ -386,6 +386,7 @@ struct flexcan_priv {
 	struct clk *clk_ipg;
 	struct clk *clk_per;
 	struct flexcan_devtype_data devtype_data;
+	const struct flexcan_devtype_data *devtype_pdata;
 	struct regulator *reg_xceiver;
 	struct flexcan_stop_mode stm;
 
@@ -538,6 +539,12 @@ static struct flexcan_devtype_data fsl_s32gen1_devtype_data = {
 	.n_irqs = ARRAY_SIZE(s32gen1_flexcan_irqs),
 	.irqs = s32gen1_flexcan_irqs,
 };
+
+static int is_s32_flexcan(struct flexcan_priv *data)
+{
+	return ((data->devtype_pdata == &fsl_s32v234_devtype_data) ||
+			(data->devtype_pdata == &fsl_s32gen1_devtype_data));
+}
 
 static inline int flexcan_request_fd(struct device *dev, bool *allowed)
 {
@@ -2397,6 +2404,7 @@ static int flexcan_probe(struct platform_device *pdev)
 
 	priv = netdev_priv(dev);
 	priv->devtype_data = *devtype_data;
+	priv->devtype_pdata = devtype_data;
 
 	if (of_property_read_bool(pdev->dev.of_node, "big-endian") ||
 	    priv->devtype_data.quirks & FLEXCAN_QUIRK_DEFAULT_BIG_ENDIAN) {
