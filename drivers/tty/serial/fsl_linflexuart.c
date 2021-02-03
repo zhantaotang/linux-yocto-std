@@ -1674,6 +1674,9 @@ static int linflex_suspend(struct device *dev)
 	clk_disable_unprepare(sport->clk);
 	clk_disable_unprepare(sport->clk_ipg);
 
+	clk_disable_unprepare(sport->clk);
+	clk_disable_unprepare(sport->clk_ipg);
+
 	return 0;
 }
 
