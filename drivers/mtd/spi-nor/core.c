@@ -5,6 +5,7 @@
  *
  * Copyright (C) 2005, Intec Automation Inc.
  * Copyright (C) 2014, Freescale Semiconductor, Inc.
+ * Copyright 2021 NXP
  */
 
 #include <linux/err.h>
@@ -205,6 +206,7 @@ static ssize_t spi_nor_spimem_read_data(struct spi_nor *nor, loff_t from,
 	ssize_t nbytes;
 	int error;
 
+	op.memop = true;
 	spi_nor_spimem_setup_op(nor, &op, nor->read_proto);
 
 	/* convert the dummy cycles to the number of bytes */
@@ -268,6 +270,7 @@ static ssize_t spi_nor_spimem_write_data(struct spi_nor *nor, loff_t to,
 	ssize_t nbytes;
 	int error;
 
+	op.memop = true;
 	if (nor->program_opcode == SPINOR_OP_AAI_WP && nor->sst_write_second)
 		op.addr.nbytes = 0;
 
@@ -323,6 +326,7 @@ int spi_nor_write_enable(struct spi_nor *nor)
 				   SPI_MEM_OP_NO_ADDR,
 				   SPI_MEM_OP_NO_DUMMY,
 				   SPI_MEM_OP_NO_DATA);
+		op.memop = false;
 
 		spi_nor_spimem_setup_op(nor, &op, nor->reg_proto);
 
@@ -354,6 +358,7 @@ int spi_nor_write_disable(struct spi_nor *nor)
 				   SPI_MEM_OP_NO_ADDR,
 				   SPI_MEM_OP_NO_DUMMY,
 				   SPI_MEM_OP_NO_DATA);
+		op.memop = false;
 
 		spi_nor_spimem_setup_op(nor, &op, nor->reg_proto);
 
@@ -3242,6 +3247,8 @@ static int spi_nor_create_read_dirmap(struct spi_nor *nor)
 	};
 	struct spi_mem_op *op = &info.op_tmpl;
 
+	op->memop = true;
+
 	spi_nor_spimem_setup_op(nor, op, nor->read_proto);
 
 	/* convert the dummy cycles to the number of bytes */
@@ -3272,6 +3279,8 @@ static int spi_nor_create_write_dirmap(struct spi_nor *nor)
 		.length = nor->mtd.size,
 	};
 	struct spi_mem_op *op = &info.op_tmpl;
+
+	op->memop = true;
 
 	if (nor->program_opcode == SPINOR_OP_AAI_WP && nor->sst_write_second)
 		op->addr.nbytes = 0;
