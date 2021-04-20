@@ -384,6 +384,7 @@
 			regmap1 = <&ipad0_regs>;
 			regmap2 = <&irq_regs>;
 			interrupt-controller;
+			#interrupt-cells = <2>;
 			interrupts = <0 210 4>;
 			status = "okay";
 		};
@@ -450,6 +451,7 @@
 			regmap2 = <&irq_regs>;
 			interrupt-controller;
 			interrupts = <0 210 4>;
+			#interrupt-cells = <2>;
 			status = "okay";
 		};
 	};
