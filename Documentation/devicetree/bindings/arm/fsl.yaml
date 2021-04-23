@@ -1002,6 +1002,15 @@ properties:
               - traverse,ten64            # Ten64 Networking Appliance / Board
           - const: fsl,ls1088a
 
+      - description:
+          Freescale S32G3 based boards
+
+          S32G398A base Emulator model
+        items:
+          - enum:
+              - fsl,s32g398a-emu
+          - const: fsl,s32g398a
+
 additionalProperties: true
 
 ...
