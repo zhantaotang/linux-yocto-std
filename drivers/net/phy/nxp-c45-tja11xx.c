@@ -668,14 +668,27 @@ static int nxp_c45_start_op(struct phy_device *phydev)
 				PHY_START_OP);
 }
 
+static int nxp_c45_ack_interrupt(struct phy_device *phydev)
+{
+	return phy_set_bits_mmd(phydev, MDIO_MMD_VEND1, VEND1_PHY_IRQ_ACK,
+				PHY_IRQ_LINK_EVENT);
+}
+
 static int nxp_c45_config_intr(struct phy_device *phydev)
 {
+	int err;
+
 	if (phydev->interrupts == PHY_INTERRUPT_ENABLED)
-		return phy_set_bits_mmd(phydev, MDIO_MMD_VEND1,
+		err = phy_set_bits_mmd(phydev, MDIO_MMD_VEND1,
 					VEND1_PHY_IRQ_EN, PHY_IRQ_LINK_EVENT);
 	else
-		return phy_clear_bits_mmd(phydev, MDIO_MMD_VEND1,
+		err = phy_clear_bits_mmd(phydev, MDIO_MMD_VEND1,
 					  VEND1_PHY_IRQ_EN, PHY_IRQ_LINK_EVENT);
+
+	if (err < 0)
+		return err;
+
+	return nxp_c45_ack_interrupt(phydev);
 }
 
 static irqreturn_t nxp_c45_handle_interrupt(struct phy_device *phydev)
