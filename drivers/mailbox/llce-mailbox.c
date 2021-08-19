@@ -713,7 +713,7 @@ static int llce_hif_startup(struct mbox_chan *chan)
 	struct llce_chan_priv *priv = chan->con_priv;
 	struct llce_mb *mb = priv->mb;
 
-	DO_ONCE(request_llce_pair_irq, mb, &mb->rxin_irqs);
+	request_llce_pair_irq(mb, &mb->rxin_irqs);
 
 	return 0;
 }
@@ -724,7 +724,7 @@ static int llce_rx_startup(struct mbox_chan *chan)
 	struct llce_mb *mb = priv->mb;
 	unsigned long flags;
 
-	DO_ONCE(request_llce_pair_irq, mb, &mb->rxout_irqs);
+	request_llce_pair_irq(mb, &mb->rxout_irqs);
 
 	/* State change must go under the lock protection */
 	spin_lock_irqsave(&priv->lock, flags);
@@ -767,7 +767,7 @@ static int llce_tx_startup(struct mbox_chan *chan)
 	struct llce_mb *mb = priv->mb;
 	unsigned long flags;
 
-	DO_ONCE(request_llce_pair_irq, mb, &mb->txack_irqs);
+	request_llce_pair_irq(mb, &mb->txack_irqs);
 
 	spin_lock_irqsave(&priv->lock, flags);
 	priv->state = LLCE_REGISTERED_CHAN;
@@ -803,7 +803,7 @@ static int llce_logger_startup(struct mbox_chan *chan)
 	unsigned long flags;
 	int ret = 0;
 
-	DO_ONCE(request_llce_irq, mb, &mb->logger_irq);
+	request_llce_irq(mb, &mb->logger_irq);
 
 	spin_lock_irqsave(&priv->lock, flags);
 	priv->state = LLCE_REGISTERED_CHAN;
