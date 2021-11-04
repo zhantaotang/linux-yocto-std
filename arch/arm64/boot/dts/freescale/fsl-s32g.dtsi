@@ -1094,3 +1094,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl0_qspi>;
 };
+
+&stm0 {
+	status = "okay";
+};
+
+&stm1 {
+	status = "okay";
+};
