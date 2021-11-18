@@ -312,10 +312,6 @@ static struct esdhc_soc_data usdhc_imx8mm_data = {
 			| ESDHC_FLAG_STATE_LOST_IN_LPMODE,
 };
 
-static struct esdhc_soc_data usdhc_s32v234_data = {
-	.flags = ESDHC_FLAG_USDHC | ESDHC_FLAG_HS400_ES,
-};
-
 static struct esdhc_soc_data usdhc_s32gen1_data = {
 	.flags = ESDHC_FLAG_USDHC | ESDHC_FLAG_HS400_ES
 			| ESDHC_FLAG_HS200 | ESDHC_FLAG_HS400
@@ -356,7 +352,6 @@ static const struct of_device_id imx_esdhc_dt_ids[] = {
 	{ .compatible = "fsl,imx7ulp-usdhc", .data = &usdhc_imx7ulp_data, },
 	{ .compatible = "fsl,imx8qxp-usdhc", .data = &usdhc_imx8qxp_data, },
 	{ .compatible = "fsl,imx8mm-usdhc", .data = &usdhc_imx8mm_data, },
-	{ .compatible = "fsl,s32v234-usdhc", .data = &usdhc_s32v234_data, },
 	{ .compatible = "fsl,s32gen1-usdhc", .data = &usdhc_s32gen1_data, },
 	{ /* sentinel */ }
 };
@@ -370,11 +365,6 @@ static inline int is_imx25_esdhc(struct pltfm_imx_data *data)
 static inline int is_imx53_esdhc(struct pltfm_imx_data *data)
 {
 	return data->socdata == &esdhc_imx53_data;
-}
-
-static inline int is_s32v234_usdhc(struct pltfm_imx_data *data)
-{
-	return data->socdata == &usdhc_s32v234_data;
 }
 
 static inline int is_s32gen1_usdhc(struct pltfm_imx_data *data)
@@ -498,10 +488,9 @@ static u32 esdhc_readl_le(struct sdhci_host *host, int reg)
 				val = readl(host->ioaddr + SDHCI_CAPABILITIES)
 					& 0xFFFF;
 			else {
-				if (is_s32v234_usdhc(imx_data)
-					|| is_s32gen1_usdhc(imx_data)) {
+				if (is_s32gen1_usdhc(imx_data)) {
 					/*
-					 * sac58r and s32v234 HOST_CTRL_CAP
+					 * s32gen1 HOST_CTRL_CAP
 					 * register does not provide speed info.
 					 * __Only__ sac58r does not support
 					 * DDR50, but this is needed to support
@@ -1425,7 +1414,7 @@ static void sdhci_esdhc_imx_hwinit(struct sdhci_host *host)
 			| ESDHC_BURST_LEN_EN_INCR,
 			host->ioaddr + SDHCI_HOST_CONTROL);
 
-		if (!is_s32v234_usdhc(imx_data) && !is_s32gen1_usdhc(imx_data)) {
+		if (!is_s32gen1_usdhc(imx_data)) {
 			/*
 			 * erratum ESDHC_FLAG_ERR004536 fix for MX6Q TO1.2
 			 * and MX6DL TO1.1, it's harmless for MX6SL
@@ -1617,7 +1606,7 @@ sdhci_esdhc_imx_probe_dt(struct platform_device *pdev,
 	 * So, ignore the pinctrl lookup.
 	 * FIXME: there must be a better way to handle this!
 	 */
-	if (!is_s32v234_usdhc(imx_data) && !is_s32gen1_usdhc(imx_data)) {
+	if (!is_s32gen1_usdhc(imx_data)) {
 		if (esdhc_is_usdhc(imx_data) && !IS_ERR(imx_data->pinctrl)) {
 			imx_data->pins_100mhz = pinctrl_lookup_state(imx_data->pinctrl,
 							ESDHC_PINCTRL_STATE_100MHZ);
