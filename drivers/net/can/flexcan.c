@@ -249,8 +249,6 @@
 #define FLEXCAN_QUIRK_SUPPORT_ECC BIT(10)
 /* Setup stop mode with SCU firmware to support wakeup */
 #define FLEXCAN_QUIRK_SETUP_STOP_MODE_SCFW BIT(11)
-/* Setup 3 separate interrupts, main, boff and err */
-#define FLEXCAN_QUIRK_NR_IRQ_3 BIT(12)
 /* Setup 16 mailboxes */
 #define FLEXCAN_QUIRK_NR_MB_16 BIT(13)
 /* Device supports RX via mailboxes */
@@ -389,9 +387,6 @@ struct flexcan_priv {
 	struct regulator *reg_xceiver;
 	struct flexcan_stop_mode stm;
 
-	int irq_boff;
-	int irq_err;
-
 	/* IPC handle when setup stop mode by System Controller firmware(scfw) */
 	struct imx_sc_ipc *sc_ipc_handle;
 
@@ -425,10 +420,18 @@ static struct flexcan_irq s32gen1_flexcan_irqs[] = {
 	{"mb_8-127", FLEXCAN_HANDLER_MB },
 };
 
+static struct flexcan_irq mcf5441x_flexcan_irqs[] = {
+	{"mb", FLEXCAN_HANDLER_MB },
+	{"state", FLEXCAN_HANDLER_STATE },
+	{"berr", FLEXCAN_HANDLER_BERR },
+};
+
 static const struct flexcan_devtype_data fsl_mcf5441x_devtype_data = {
 	.quirks = FLEXCAN_QUIRK_BROKEN_PERR_STATE |
-		FLEXCAN_QUIRK_NR_IRQ_3 | FLEXCAN_QUIRK_NR_MB_16 |
+		FLEXCAN_QUIRK_NR_MB_16 |
 		FLEXCAN_QUIRK_SUPPPORT_RX_FIFO,
+	.n_irqs = ARRAY_SIZE(mcf5441x_flexcan_irqs),
+	.irqs = mcf5441x_flexcan_irqs,
 };
 
 static const struct flexcan_devtype_data fsl_p1010_devtype_data = {
@@ -1974,18 +1977,6 @@ static int flexcan_open(struct net_device *dev)
 			}
 	last = priv->devtype_data.n_irqs * M;
 
-	if (priv->devtype_data.quirks & FLEXCAN_QUIRK_NR_IRQ_3) {
-		err = request_irq(priv->irq_boff,
-				  flexcan_irq, IRQF_SHARED, dev->name, dev);
-		if (err)
-			goto out_free_irq;
-
-		err = request_irq(priv->irq_err,
-				  flexcan_irq, IRQF_SHARED, dev->name, dev);
-		if (err)
-			goto out_free_irq_boff;
-	}
-
 	flexcan_chip_interrupts_enable(dev);
 
 	can_led_event(dev, CAN_LED_EVENT_OPEN);
@@ -1994,8 +1985,6 @@ static int flexcan_open(struct net_device *dev)
 
 	return 0;
 
- out_free_irq_boff:
-	free_irq(priv->irq_boff, dev);
  out_free_irq:
 	while (last--)
 		if (priv->devtype_data.irqs[last / M].handler_mask &
@@ -2022,11 +2011,6 @@ static int flexcan_close(struct net_device *dev)
 
 	netif_stop_queue(dev);
 	flexcan_chip_interrupts_disable(dev);
-
-	if (priv->devtype_data.quirks & FLEXCAN_QUIRK_NR_IRQ_3) {
-		free_irq(priv->irq_err, dev);
-		free_irq(priv->irq_boff, dev);
-	}
 
 	for (i = 0; i < priv->devtype_data.n_irqs; i++)
 		for (j = 0; j < M; j++)
@@ -2439,19 +2423,6 @@ static int flexcan_probe(struct platform_device *pdev)
 	priv->reg_xceiver = reg_xceiver;
 	priv->irq_nos = irq_nos;
 
-	if (priv->devtype_data.quirks & FLEXCAN_QUIRK_NR_IRQ_3) {
-		priv->irq_boff = platform_get_irq(pdev, 1);
-		if (priv->irq_boff <= 0) {
-			err = -ENODEV;
-			goto failed_platform_get_irq;
-		}
-		priv->irq_err = platform_get_irq(pdev, 2);
-		if (priv->irq_err <= 0) {
-			err = -ENODEV;
-			goto failed_platform_get_irq;
-		}
-	}
-
 	err = flexcan_request_fd(&pdev->dev, &fd_allowed);
 	if (err)
 		goto failed_fd_check;
@@ -2502,7 +2473,6 @@ static int flexcan_probe(struct platform_device *pdev)
  failed_register:
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
- failed_platform_get_irq:
 	free_candev(dev);
 	return err;
 }
