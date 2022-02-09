@@ -50,11 +50,14 @@ struct s32cc_priv_data {
 	const struct s32gen1_xpcs_ops *xpcs_ops;
 };
 
-int xpcs_config(struct mdio_xpcs_args *xpcs,
-		const struct phylink_link_state *state)
+static int xpcs_config(struct phylink_pcs *pcs,
+			  unsigned int mode,
+			  phy_interface_t interface,
+			  const unsigned long *advertising,
+			  bool permit_pause_to_mac)
 {
-	struct phylink_link_state sgmii_state = { 0 };
-	struct s32cc_priv_data *gmac = (struct s32cc_priv_data *)xpcs->bus;
+	struct dw_xpcs *dw_xpcs = container_of(pcs, struct dw_xpcs, pcs);
+	struct s32cc_priv_data *gmac = (struct s32cc_priv_data *)dw_xpcs->mdiodev->bus;
 
 	if (gmac->intf_mode != PHY_INTERFACE_MODE_SGMII)
 		return 0;
@@ -62,31 +65,22 @@ int xpcs_config(struct mdio_xpcs_args *xpcs,
 	if (!gmac->xpcs || !gmac->xpcs_ops)
 		return -EINVAL;
 
-	if (gmac->link_an == MLO_AN_FIXED || gmac->link_an == MLO_AN_PHY) {
-		gmac->xpcs_ops->xpcs_get_state(gmac->xpcs, &sgmii_state);
-		sgmii_state.speed = state->speed;
-		sgmii_state.duplex = state->duplex;
-		sgmii_state.an_enabled = false;
-		gmac->xpcs_ops->xpcs_config(gmac->xpcs, &sgmii_state);
-	} else if (gmac->link_an == MLO_AN_INBAND) {
-		gmac->xpcs_ops->xpcs_config(gmac->xpcs, state);
-	} else {
-		return -EINVAL;
-	}
+	gmac->xpcs_ops->xpcs_config(gmac->xpcs, NULL);
 
 	return 0;
 }
 
-int xpcs_get_state(struct mdio_xpcs_args *xpcs,
+static void xpcs_get_state(struct phylink_pcs *pcs,
 		   struct phylink_link_state *state)
 {
-	struct s32cc_priv_data *gmac = (struct s32cc_priv_data *)xpcs->bus;
+	struct dw_xpcs *dw_xpcs = container_of(pcs, struct dw_xpcs, pcs);
+	struct s32cc_priv_data *gmac = (struct s32cc_priv_data *)dw_xpcs->mdiodev->bus;
 
 	if (gmac->intf_mode != PHY_INTERFACE_MODE_SGMII)
-		return 0;
+		return;
 
 	if (!gmac->xpcs || !gmac->xpcs_ops)
-		return -EINVAL;
+		return;
 
 	gmac->xpcs_ops->xpcs_get_state(gmac->xpcs, state);
 
@@ -94,12 +88,12 @@ int xpcs_get_state(struct mdio_xpcs_args *xpcs,
 	if (gmac->phyless_an)
 		gmac->xpcs_ops->xpcs_config(gmac->xpcs, state);
 
-	return 0;
+	return;
 }
 
-static struct mdio_xpcs_ops s32cc_xpcs_ops = {
-	.config = xpcs_config,
-	.get_state = xpcs_get_state,
+static struct phylink_pcs_ops s32cc_xpcs_ops = {
+	.pcs_config = xpcs_config,
+	.pcs_get_state = xpcs_get_state,
 };
 
 static int s32cc_gmac_init(struct platform_device *pdev, void *priv)
@@ -296,7 +290,7 @@ static int s32cc_dwmac_probe(struct platform_device *pdev)
 		return PTR_ERR(gmac->ctrl_sts);
 	}
 
-	plat_dat = stmmac_probe_config_dt(pdev, &stmmac_res.mac);
+	plat_dat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
 	if (IS_ERR(plat_dat))
 		return PTR_ERR(plat_dat);
 
@@ -405,8 +399,8 @@ static int s32cc_dwmac_probe(struct platform_device *pdev)
 	 */
 	if (gmac->xpcs || gmac->xpcs_ops) {
 		priv = netdev_priv(dev_get_drvdata(&pdev->dev));
-		priv->hw->xpcs = &s32cc_xpcs_ops;
-		priv->hw->xpcs_args.bus = (struct mii_bus *)gmac;
+		priv->hw->xpcs->pcs.ops = &s32cc_xpcs_ops;
+		priv->hw->xpcs->mdiodev->bus = (struct mii_bus *)gmac;
 	}
 
 	return 0;
