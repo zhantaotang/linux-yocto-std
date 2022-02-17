@@ -476,8 +476,7 @@ static struct flexcan_devtype_data fsl_s32v234_devtype_data = {
 
 static struct flexcan_devtype_data fsl_s32gen1_devtype_data = {
 	.quirks = FLEXCAN_QUIRK_DISABLE_RXFG | FLEXCAN_QUIRK_DISABLE_MECR |
-		FLEXCAN_QUIRK_USE_RX_MAILBOX |
-		FLEXCAN_QUIRK_SETUP_STOP_MODE_GPR,
+		FLEXCAN_QUIRK_USE_RX_MAILBOX,
 };
 
 static inline int flexcan_request_fd(struct device *dev, bool *allowed)
