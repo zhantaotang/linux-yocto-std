@@ -318,6 +318,10 @@ static void stmmac_clk_csr_set(struct stmmac_priv *priv)
 			priv->clk_csr = STMMAC_CSR_150_250M;
 		else if ((clk_rate >= CSR_F_250M) && (clk_rate <= CSR_F_300M))
 			priv->clk_csr = STMMAC_CSR_250_300M;
+		else if ((clk_rate >= CSR_F_300M) && (clk_rate < CSR_F_500M))
+			priv->clk_csr = STMMAC_CSR_300_500M;
+		else if ((clk_rate >= CSR_F_500M) && (clk_rate < CSR_F_800M))
+			priv->clk_csr = STMMAC_CSR_500_800M;
 	}
 
 	if (priv->plat->has_sun8i) {
@@ -5120,6 +5124,7 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 	}
 	while (count < limit) {
 		unsigned int buf1_len = 0, buf2_len = 0;
+		unsigned int fcs_len_in_buf1, fcs_len_in_buf2;
 		enum pkt_hash_types hash_type;
 		struct stmmac_rx_buffer *buf;
 		struct dma_desc *np, *p;
@@ -5210,11 +5215,13 @@ read_again:
 		if (likely(!(status & rx_not_ls)) &&
 		    (likely(priv->synopsys_id >= DWMAC_CORE_4_00) ||
 		     unlikely(status != llc_snap))) {
-			if (buf2_len)
-				buf2_len -= ETH_FCS_LEN;
-			else
-				buf1_len -= ETH_FCS_LEN;
 
+			fcs_len_in_buf2 = min_t(unsigned int, ETH_FCS_LEN, buf2_len);
+			fcs_len_in_buf1 = min_t(unsigned int,
+						ETH_FCS_LEN - fcs_len_in_buf2, buf1_len);
+
+			buf2_len -= fcs_len_in_buf2;
+			buf1_len -= fcs_len_in_buf1;
 			len -= ETH_FCS_LEN;
 		}
 

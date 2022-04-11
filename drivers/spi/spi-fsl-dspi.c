@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0+
 //
 // Copyright 2013 Freescale Semiconductor, Inc.
-// Copyright 2020 NXP
+// Copyright 2020-2021 NXP
 //
 // Freescale DSPI driver
 // This file contains a driver for the Freescale DSPI
@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
+#include <linux/of_address.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/regmap.h>
 #include <linux/spi/spi.h>
@@ -23,6 +24,7 @@
 
 #define SPI_MCR				0x00
 #define SPI_MCR_MASTER			BIT(31)
+#define SPI_MCR_MTFE			BIT(26)
 #define SPI_MCR_PCSIS(x)		((x) << 16)
 #define SPI_MCR_CLR_TXF			BIT(11)
 #define SPI_MCR_CLR_RXF			BIT(10)
@@ -34,8 +36,9 @@
 #define SPI_TCR				0x08
 #define SPI_TCR_GET_TCNT(x)		(((x) & GENMASK(31, 16)) >> 16)
 
-#define SPI_CTAR(x)			(0x0c + (((x) & GENMASK(1, 0)) * 4))
+#define SPI_CTAR(x)			(0x0c + (((x) & GENMASK(2, 0)) * 4))
 #define SPI_CTAR_FMSZ(x)		(((x) << 27) & GENMASK(30, 27))
+#define SPI_CTAR_DBR			BIT(31)
 #define SPI_CTAR_CPOL			BIT(26)
 #define SPI_CTAR_CPHA			BIT(25)
 #define SPI_CTAR_LSBFE			BIT(24)
@@ -61,6 +64,7 @@
 #define SPI_SR_TFIWF			BIT(18)
 #define SPI_SR_RFDF			BIT(17)
 #define SPI_SR_CMDFFF			BIT(16)
+#define SPI_SR_TXRXS			BIT(30)
 #define SPI_SR_CLEAR			(SPI_SR_TCFQF | \
 					SPI_SR_TFUF | SPI_SR_TFFF | \
 					SPI_SR_CMDTCF | SPI_SR_SPEF | \
@@ -91,12 +95,14 @@
 #define SPI_TXFR1			0x40
 #define SPI_TXFR2			0x44
 #define SPI_TXFR3			0x48
+#define SPI_TXFR4           0x4C
 #define SPI_RXFR0			0x7c
 #define SPI_RXFR1			0x80
 #define SPI_RXFR2			0x84
 #define SPI_RXFR3			0x88
+#define SPI_RXFR4			0x8C
 
-#define SPI_CTARE(x)			(0x11c + (((x) & GENMASK(1, 0)) * 4))
+#define SPI_CTARE(x)			(0x11c + (((x) & GENMASK(2, 0)) * 4))
 #define SPI_CTARE_FMSZE(x)		(((x) & 0x1) << 16)
 #define SPI_CTARE_DTCP(x)		((x) & 0x7ff)
 
@@ -106,6 +112,8 @@
 #define SPI_FRAME_EBITS(bits)		SPI_CTARE_FMSZE(((bits) - 1) >> 4)
 
 #define DMA_COMPLETION_TIMEOUT		msecs_to_jiffies(3000)
+
+#define SPI_25MHZ					25000000
 
 struct chip_data {
 	u32			ctar_val;
@@ -133,6 +141,8 @@ enum {
 	LX2160A,
 	MCF5441X,
 	VF610,
+	S32GEN1,
+	S32_SLAVE,
 };
 
 static const struct fsl_dspi_devtype_data devtype_data[] = {
@@ -190,6 +200,16 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 		.max_clock_factor	= 8,
 		.fifo_size		= 16,
 	},
+	[S32GEN1] = {
+		.trans_mode		= DSPI_XSPI_MODE,
+		.max_clock_factor	= 1,
+		.fifo_size		= 5,
+	},
+	[S32_SLAVE] = {
+		.trans_mode		= DSPI_DMA_MODE,
+		.max_clock_factor	= 1,
+		.fifo_size		= 5,
+	},
 };
 
 struct fsl_dspi_dma {
@@ -212,9 +232,9 @@ struct fsl_dspi {
 
 	struct regmap				*regmap;
 	struct regmap				*regmap_pushr;
-	int					irq;
+	int						irq;
 	struct clk				*clk;
-
+	bool					mtf_enabled;
 	struct spi_transfer			*cur_transfer;
 	struct spi_message			*cur_msg;
 	struct chip_data			*cur_chip;
@@ -241,9 +261,19 @@ struct fsl_dspi {
 	int					pushr_cmd;
 	int					pushr_tx;
 
+	struct pinctrl			*pinctrl_dspi;
+	struct pinctrl_state	*pinctrl_slave;
+
 	void (*host_to_dev)(struct fsl_dspi *dspi, u32 *txdata);
 	void (*dev_to_host)(struct fsl_dspi *dspi, u32 rxdata);
 };
+
+static int is_s32gen1_dspi(struct fsl_dspi *data);
+
+static u8 get_dspi_pushr_cmd_pcs(struct fsl_dspi *dspi, unsigned int pos)
+{
+	return (BIT(pos) & GENMASK(5, 0));
+}
 
 static void dspi_native_host_to_dev(struct fsl_dspi *dspi, u32 *txdata)
 {
@@ -599,7 +629,7 @@ static void dspi_release_dma(struct fsl_dspi *dspi)
 }
 
 static void hz_to_spi_baud(char *pbr, char *br, int speed_hz,
-			   unsigned long clkrate)
+			   unsigned long clkrate, bool mtf_enabled)
 {
 	/* Valid baud rate pre-scaler values */
 	int pbr_tbl[4] = {2, 3, 5, 7};
@@ -608,7 +638,7 @@ static void hz_to_spi_baud(char *pbr, char *br, int speed_hz,
 			256,	512,	1024,	2048,
 			4096,	8192,	16384,	32768 };
 	int scale_needed, scale, minscale = INT_MAX;
-	int i, j;
+	int i, j, dbr = 1;
 
 	scale_needed = clkrate / speed_hz;
 	if (clkrate % speed_hz)
@@ -616,7 +646,12 @@ static void hz_to_spi_baud(char *pbr, char *br, int speed_hz,
 
 	for (i = 0; i < ARRAY_SIZE(brs); i++)
 		for (j = 0; j < ARRAY_SIZE(pbr_tbl); j++) {
-			scale = brs[i] * pbr_tbl[j];
+
+			if (!mtf_enabled)
+				scale = brs[i] * pbr_tbl[j];
+			else
+				scale = (brs[i] * pbr_tbl[j]) / (1 + dbr);
+
 			if (scale >= scale_needed) {
 				if (scale < minscale) {
 					minscale = scale;
@@ -907,16 +942,24 @@ static int dspi_transfer_one_message(struct spi_controller *ctlr,
 	struct spi_device *spi = message->spi;
 	struct spi_transfer *transfer;
 	int status = 0;
+	u8 pushr_cmd_pcs;
+	u32 val = 0;
 
 	message->actual_length = 0;
+	pushr_cmd_pcs = get_dspi_pushr_cmd_pcs(dspi, spi->chip_select);
+
+	/* Put DSPI in running mode */
+	regmap_update_bits(dspi->regmap, SPI_MCR, SPI_MCR_HALT, 0);
+	while (regmap_read(dspi->regmap, SPI_SR, &val) >= 0 &&
+		!(val & SPI_SR_TXRXS))
+		;
 
 	list_for_each_entry(transfer, &message->transfers, transfer_list) {
 		dspi->cur_transfer = transfer;
 		dspi->cur_msg = message;
 		dspi->cur_chip = spi_get_ctldata(spi);
 		/* Prepare command word for CMD FIFO */
-		dspi->tx_cmd = SPI_PUSHR_CMD_CTAS(0) |
-			       SPI_PUSHR_CMD_PCS(spi->chip_select);
+		dspi->tx_cmd = SPI_PUSHR_CMD_CTAS(0) | pushr_cmd_pcs;
 		if (list_is_last(&dspi->cur_transfer->transfer_list,
 				 &dspi->cur_msg->transfers)) {
 			/* Leave PCS activated after last transfer when
@@ -966,10 +1009,28 @@ static int dspi_transfer_one_message(struct spi_controller *ctlr,
 		spi_transfer_delay_exec(transfer);
 	}
 
+	/* Put DSPI in stop mode */
+	regmap_update_bits(dspi->regmap, SPI_MCR, SPI_MCR_HALT, SPI_MCR_HALT);
+	while (regmap_read(dspi->regmap, SPI_SR, &val) >= 0 &&
+		val & SPI_SR_TXRXS)
+		;
+
 	message->status = status;
 	spi_finalize_current_message(ctlr);
 
 	return status;
+}
+
+static int dspi_set_mtf(struct fsl_dspi *dspi)
+{
+	if (!spi_controller_is_slave(dspi->ctlr)) {
+		if (dspi->mtf_enabled)
+			regmap_update_bits(dspi->regmap, SPI_MCR, SPI_MCR_MTFE, SPI_MCR_MTFE);
+		else
+			regmap_update_bits(dspi->regmap, SPI_MCR, SPI_MCR_MTFE, 0);
+	}
+
+	return 0;
 }
 
 static int dspi_setup(struct spi_device *spi)
@@ -1004,7 +1065,15 @@ static int dspi_setup(struct spi_device *spi)
 	}
 
 	clkrate = clk_get_rate(dspi->clk);
-	hz_to_spi_baud(&pbr, &br, spi->max_speed_hz, clkrate);
+
+	if (is_s32gen1_dspi(dspi) && spi->max_speed_hz > SPI_25MHZ)
+		dspi->mtf_enabled = true;
+	else
+		dspi->mtf_enabled = false;
+
+	dspi_set_mtf(dspi);
+
+	hz_to_spi_baud(&pbr, &br, spi->max_speed_hz, clkrate, dspi->mtf_enabled);
 
 	/* Set PCS to SCK delay scale values */
 	ns_delay_scale(&pcssck, &cssck, cs_sck_delay, clkrate);
@@ -1025,6 +1094,9 @@ static int dspi_setup(struct spi_device *spi)
 				  SPI_CTAR_ASC(asc) |
 				  SPI_CTAR_PBR(pbr) |
 				  SPI_CTAR_BR(br);
+
+		if (dspi->mtf_enabled)
+			chip->ctar_val |= SPI_CTAR_DBR;
 
 		if (spi->mode & SPI_LSB_FIRST)
 			chip->ctar_val |= SPI_CTAR_LSBFE;
@@ -1073,10 +1145,52 @@ static const struct of_device_id fsl_dspi_dt_ids[] = {
 	}, {
 		.compatible = "fsl,lx2160a-dspi",
 		.data = &devtype_data[LX2160A],
+	}, {
+		.compatible = "fsl,s32gen1-dspi",
+		.data = &devtype_data[S32GEN1],
 	},
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, fsl_dspi_dt_ids);
+
+static inline int is_s32gen1_dspi(struct fsl_dspi *data)
+{
+	return data->devtype_data == &devtype_data[S32GEN1];
+}
+
+static int dspi_init(struct fsl_dspi *dspi)
+{
+	unsigned int mcr;
+
+	mcr = SPI_MCR_PCSIS(GENMASK(dspi->ctlr->max_native_cs - 1, 0));
+
+	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+		mcr |= SPI_MCR_XSPI;
+	if (!spi_controller_is_slave(dspi->ctlr))
+		mcr |= SPI_MCR_MASTER;
+
+	mcr |= SPI_MCR_HALT;
+
+	regmap_write(dspi->regmap, SPI_MCR, mcr);
+	regmap_write(dspi->regmap, SPI_SR, SPI_SR_CLEAR);
+
+	switch (dspi->devtype_data->trans_mode) {
+	case DSPI_XSPI_MODE:
+		regmap_write(dspi->regmap, SPI_RSER, SPI_RSER_CMDTCFE);
+		break;
+	case DSPI_DMA_MODE:
+		regmap_write(dspi->regmap, SPI_RSER,
+			     SPI_RSER_TFFFE | SPI_RSER_TFFFD |
+			     SPI_RSER_RFDFE | SPI_RSER_RFDFD);
+		break;
+	default:
+		dev_err(&dspi->pdev->dev, "unsupported trans_mode %u\n",
+			dspi->devtype_data->trans_mode);
+		return -EINVAL;
+	}
+
+	return 0;
+}
 
 #ifdef CONFIG_PM_SLEEP
 static int dspi_suspend(struct device *dev)
@@ -1098,12 +1212,28 @@ static int dspi_resume(struct device *dev)
 	struct fsl_dspi *dspi = dev_get_drvdata(dev);
 	int ret;
 
-	pinctrl_pm_select_default_state(dev);
+	if (dspi->ctlr->slave)
+		pinctrl_select_state(dspi->pinctrl_dspi,
+				dspi->pinctrl_slave);
+	else
+		pinctrl_pm_select_default_state(dev);
 
 	ret = clk_prepare_enable(dspi->clk);
 	if (ret)
 		return ret;
 	spi_controller_resume(dspi->ctlr);
+
+	if (is_s32gen1_dspi(dspi) ||
+			dspi->devtype_data == &devtype_data[S32_SLAVE]) {
+		ret = dspi_init(dspi);
+		if (ret) {
+			dev_err(dev, "failed to initialize dspi\n");
+			return ret;
+		}
+
+		dspi_set_mtf(dspi);
+	}
+
 	if (dspi->irq)
 		enable_irq(dspi->irq);
 
@@ -1113,10 +1243,38 @@ static int dspi_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(dspi_pm, dspi_suspend, dspi_resume);
 
+static const struct regmap_range dspi_yes_ranges[] = {
+	regmap_reg_range(SPI_MCR, SPI_MCR),
+	regmap_reg_range(SPI_TCR, SPI_CTAR(3)),
+	regmap_reg_range(SPI_SR, SPI_TXFR3),
+	regmap_reg_range(SPI_RXFR0, SPI_RXFR3),
+	regmap_reg_range(SPI_CTARE(0), SPI_CTARE(3)),
+	regmap_reg_range(SPI_SREX, SPI_SREX),
+};
+
+static const struct regmap_range s32_dspi_yes_ranges[] = {
+	regmap_reg_range(SPI_MCR, SPI_MCR),
+	regmap_reg_range(SPI_TCR, SPI_CTAR(5)),
+	regmap_reg_range(SPI_SR, SPI_TXFR4),
+	regmap_reg_range(SPI_RXFR0, SPI_RXFR4),
+	regmap_reg_range(SPI_CTARE(0), SPI_CTARE(5)),
+	regmap_reg_range(SPI_SREX, SPI_SREX),
+};
+
+static const struct regmap_access_table dspi_access_table = {
+	.yes_ranges	= dspi_yes_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(dspi_yes_ranges),
+};
+
+static const struct regmap_access_table s32_dspi_access_table = {
+	.yes_ranges	= s32_dspi_yes_ranges,
+	.n_yes_ranges	= ARRAY_SIZE(s32_dspi_yes_ranges),
+};
+
 static const struct regmap_range dspi_volatile_ranges[] = {
 	regmap_reg_range(SPI_MCR, SPI_TCR),
 	regmap_reg_range(SPI_SR, SPI_SR),
-	regmap_reg_range(SPI_PUSHR, SPI_RXFR3),
+	regmap_reg_range(SPI_PUSHR, SPI_RXFR4),
 };
 
 static const struct regmap_access_table dspi_volatile_table = {
@@ -1124,18 +1282,10 @@ static const struct regmap_access_table dspi_volatile_table = {
 	.n_yes_ranges	= ARRAY_SIZE(dspi_volatile_ranges),
 };
 
-static const struct regmap_config dspi_regmap_config = {
-	.reg_bits	= 32,
-	.val_bits	= 32,
-	.reg_stride	= 4,
-	.max_register	= 0x88,
-	.volatile_table	= &dspi_volatile_table,
-};
-
 static const struct regmap_range dspi_xspi_volatile_ranges[] = {
 	regmap_reg_range(SPI_MCR, SPI_TCR),
 	regmap_reg_range(SPI_SR, SPI_SR),
-	regmap_reg_range(SPI_PUSHR, SPI_RXFR3),
+	regmap_reg_range(SPI_PUSHR, SPI_RXFR4),
 	regmap_reg_range(SPI_SREX, SPI_SREX),
 };
 
@@ -1144,15 +1294,52 @@ static const struct regmap_access_table dspi_xspi_volatile_table = {
 	.n_yes_ranges	= ARRAY_SIZE(dspi_xspi_volatile_ranges),
 };
 
-static const struct regmap_config dspi_xspi_regmap_config[] = {
-	{
+enum {
+	DSPI_REGMAP,
+	S32_DSPI_REGMAP,
+	DSPI_XSPI_REGMAP,
+	S32_DSPI_XSPI_REGMAP,
+	DSPI_PUSHR
+};
+
+static const struct regmap_config dspi_regmap_config[] = {
+	[DSPI_REGMAP] = {
+		.reg_bits	= 32,
+		.val_bits	= 32,
+		.reg_stride	= 4,
+		.max_register	= 0x8C,
+		.volatile_table	= &dspi_volatile_table,
+		.wr_table	= &dspi_access_table,
+		.rd_table	= &dspi_access_table,
+	},
+	[S32_DSPI_REGMAP] = {
+		.reg_bits	= 32,
+		.val_bits	= 32,
+		.reg_stride	= 4,
+		.max_register	= 0x8C,
+		.volatile_table	= &dspi_volatile_table,
+		.wr_table	= &s32_dspi_access_table,
+		.rd_table	= &s32_dspi_access_table,
+	},
+	[DSPI_XSPI_REGMAP] = {
 		.reg_bits	= 32,
 		.val_bits	= 32,
 		.reg_stride	= 4,
 		.max_register	= 0x13c,
 		.volatile_table	= &dspi_xspi_volatile_table,
+		.wr_table	= &dspi_access_table,
+		.rd_table	= &dspi_access_table,
 	},
-	{
+	[S32_DSPI_XSPI_REGMAP] = {
+		.reg_bits	= 32,
+		.val_bits	= 32,
+		.reg_stride	= 4,
+		.max_register	= 0x13c,
+		.volatile_table	= &dspi_xspi_volatile_table,
+		.wr_table	= &s32_dspi_access_table,
+		.rd_table	= &s32_dspi_access_table,
+	},
+	[DSPI_PUSHR] = {
 		.name		= "pushr",
 		.reg_bits	= 16,
 		.val_bits	= 16,
@@ -1161,37 +1348,27 @@ static const struct regmap_config dspi_xspi_regmap_config[] = {
 	},
 };
 
-static int dspi_init(struct fsl_dspi *dspi)
+static void dspi_set_pinctrl(struct device *dev)
 {
-	unsigned int mcr;
+	struct fsl_dspi *dspi = dev_get_drvdata(dev);
+	int ret;
 
-	/* Set idle states for all chip select signals to high */
-	mcr = SPI_MCR_PCSIS(GENMASK(dspi->ctlr->max_native_cs - 1, 0));
-
-	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
-		mcr |= SPI_MCR_XSPI;
-	if (!spi_controller_is_slave(dspi->ctlr))
-		mcr |= SPI_MCR_MASTER;
-
-	regmap_write(dspi->regmap, SPI_MCR, mcr);
-	regmap_write(dspi->regmap, SPI_SR, SPI_SR_CLEAR);
-
-	switch (dspi->devtype_data->trans_mode) {
-	case DSPI_XSPI_MODE:
-		regmap_write(dspi->regmap, SPI_RSER, SPI_RSER_CMDTCFE);
-		break;
-	case DSPI_DMA_MODE:
-		regmap_write(dspi->regmap, SPI_RSER,
-			     SPI_RSER_TFFFE | SPI_RSER_TFFFD |
-			     SPI_RSER_RFDFE | SPI_RSER_RFDFD);
-		break;
-	default:
-		dev_err(&dspi->pdev->dev, "unsupported trans_mode %u\n",
-			dspi->devtype_data->trans_mode);
-		return -EINVAL;
+	dspi->pinctrl_dspi = devm_pinctrl_get(dev);
+	if (IS_ERR(dspi->pinctrl_dspi)) {
+		dev_warn(dev, "no pinctrl info found: %ld\n",
+			PTR_ERR(dspi->pinctrl_dspi));
+		return;
 	}
 
-	return 0;
+	dspi->pinctrl_slave = pinctrl_lookup_state(dspi->pinctrl_dspi,
+						   "slave");
+	if (!IS_ERR(dspi->pinctrl_slave)) {
+		ret = pinctrl_select_state(dspi->pinctrl_dspi,
+					   dspi->pinctrl_slave);
+		if (ret < 0)
+			dev_err(dev, "failed to switch to slave pinctrl: %d\n",
+				ret);
+	}
 }
 
 static int dspi_slave_abort(struct spi_master *master)
@@ -1226,12 +1403,18 @@ static int dspi_probe(struct platform_device *pdev)
 	struct resource *res;
 	void __iomem *base;
 	bool big_endian;
+	bool is_s32_dspi = false;
 
 	dspi = devm_kzalloc(&pdev->dev, sizeof(*dspi), GFP_KERNEL);
 	if (!dspi)
 		return -ENOMEM;
 
-	ctlr = spi_alloc_master(&pdev->dev, 0);
+	if (of_property_read_bool(np, "spi-slave"))
+		ctlr = spi_alloc_slave(&pdev->dev,
+				sizeof(struct fsl_dspi));
+	else
+		ctlr = spi_alloc_master(&pdev->dev,
+				sizeof(struct fsl_dspi));
 	if (!ctlr)
 		return -ENOMEM;
 
@@ -1279,6 +1462,12 @@ static int dspi_probe(struct platform_device *pdev)
 			goto out_ctlr_put;
 		}
 
+		if (is_s32gen1_dspi(dspi))
+			is_s32_dspi = true;
+
+		if (ctlr->slave && is_s32_dspi)
+			dspi->devtype_data = &devtype_data[S32_SLAVE];
+
 		big_endian = of_device_is_big_endian(np);
 	}
 	if (big_endian) {
@@ -1301,10 +1490,22 @@ static int dspi_probe(struct platform_device *pdev)
 		goto out_ctlr_put;
 	}
 
-	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
-		regmap_config = &dspi_xspi_regmap_config[0];
-	else
-		regmap_config = &dspi_regmap_config;
+	if (is_s32_dspi) {
+		if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+			regmap_config =
+				&dspi_regmap_config[S32_DSPI_XSPI_REGMAP];
+		else
+			regmap_config =
+				&dspi_regmap_config[S32_DSPI_REGMAP];
+	} else {
+		if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+			regmap_config =
+				&dspi_regmap_config[DSPI_XSPI_REGMAP];
+		else
+			regmap_config =
+				&dspi_regmap_config[DSPI_REGMAP];
+	}
+
 	dspi->regmap = devm_regmap_init_mmio(&pdev->dev, base, regmap_config);
 	if (IS_ERR(dspi->regmap)) {
 		dev_err(&pdev->dev, "failed to init regmap: %ld\n",
@@ -1316,7 +1517,7 @@ static int dspi_probe(struct platform_device *pdev)
 	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE) {
 		dspi->regmap_pushr = devm_regmap_init_mmio(
 			&pdev->dev, base + SPI_PUSHR,
-			&dspi_xspi_regmap_config[1]);
+			&dspi_regmap_config[DSPI_PUSHR]);
 		if (IS_ERR(dspi->regmap_pushr)) {
 			dev_err(&pdev->dev,
 				"failed to init pushr regmap: %ld\n",
@@ -1325,6 +1526,9 @@ static int dspi_probe(struct platform_device *pdev)
 			goto out_ctlr_put;
 		}
 	}
+
+	if (ctlr->slave)
+		dspi_set_pinctrl(&pdev->dev);
 
 	dspi->clk = devm_clk_get(&pdev->dev, "dspi");
 	if (IS_ERR(dspi->clk)) {
