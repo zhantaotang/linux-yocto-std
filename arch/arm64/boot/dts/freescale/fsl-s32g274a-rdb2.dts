@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Device Tree file for S32G274ARDB Board Rev C.
+ *
+ * Copyright 2020-2022 NXP
+ *
+ */
+
+/dts-v1/;
+#include "fsl-s32g274a.dtsi"
+#include "fsl-s32gxxxa-rdb.dtsi"
+/ {
+	model = "Freescale S32G274";
+	compatible = "fsl,s32g274-simu", "fsl,s32g274",
+				 "arm,vexpress,v2p-aarch64", "arm,vexpress";
+};
+

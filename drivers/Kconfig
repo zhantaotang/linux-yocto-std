@@ -86,6 +86,7 @@ source "drivers/hwmon/Kconfig"
 source "drivers/thermal/Kconfig"
 
 source "drivers/watchdog/Kconfig"
+source "drivers/misc/fccu/Kconfig"
 
 source "drivers/ssb/Kconfig"
 
@@ -234,6 +235,8 @@ source "drivers/slimbus/Kconfig"
 source "drivers/interconnect/Kconfig"
 
 source "drivers/counter/Kconfig"
+
+source "drivers/ddr/s32-gen1/Kconfig"
 
 source "drivers/most/Kconfig"
 endmenu

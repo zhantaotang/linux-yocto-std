@@ -26,6 +26,7 @@ properties:
           - fsl,vf610-flexcan
           - fsl,ls1021ar2-flexcan
           - fsl,lx2160ar1-flexcan
+          - fsl,s32gen1-flexcan
       - items:
           - enum:
               - fsl,imx53-flexcan
@@ -46,7 +47,29 @@ properties:
     maxItems: 1
 
   interrupts:
-    maxItems: 1
+    description: |
+      Interrupt tuple(s) for this device. If interrupt-names are
+      missing, these should specify, in order
+      for S32GEN1
+      1. BOFFINT | BOFFDONEINT | TWRNINT | RWRNINT;
+      2. ERRINT;
+      3. MB0-7 interrupts;
+      4. MB8-127 interrupts;
+      for all the other SoCs
+      1. all interrupts combined.
+
+  interrupt-names:
+    description: |
+      Allows the interrupt specifiers in "interrupts" to be stated
+      in any order, one for each name in here. Can contain
+      "state" - BOFFINT | BOFFDONEINT | TWRNINT | RWRNINT;
+      "berr" - ERRINT;
+      "mb_0-7" - MB0-7 interrupts;
+      "mb_8-127" - MB8-127 interrupts;
+      "state-berr" - ERRINT | BOFFINT | BOFFDONEINT | TWRNINT |
+                     RWRNINT;
+      "mb" - all MB interrupts;
+      "all" - all interrupts combined.
 
   clocks:
     maxItems: 2

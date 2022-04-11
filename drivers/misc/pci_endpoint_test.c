@@ -72,6 +72,9 @@
 #define PCI_DEVICE_ID_TI_J7200			0xb00f
 #define PCI_DEVICE_ID_TI_AM64			0xb010
 #define PCI_DEVICE_ID_LS1088A			0x80c0
+#define PCI_DEVICE_ID_LX2160A			0x8d80
+#define PCI_DEVICE_ID_S32G			0x4002
+#define PCI_DEVICE_ID_S32V			0x4001
 
 #define is_am654_pci_dev(pdev)		\
 		((pdev)->device == PCI_DEVICE_ID_TI_AM654)
@@ -270,12 +273,14 @@ static bool pci_endpoint_test_bar(struct pci_endpoint_test *test,
 	u32 val;
 	int size;
 	struct pci_dev *pdev = test->pdev;
+	struct device *dev = &pdev->dev;
 
 	if (!test->bar[barno])
 		return false;
 
 	size = pci_resource_len(pdev, barno);
 
+	dev_info(dev, "Testing BAR%d, size %d bytes\n", barno, size);
 	if (barno == test->test_reg_bar)
 		size = 0x4;
 
@@ -284,8 +289,11 @@ static bool pci_endpoint_test_bar(struct pci_endpoint_test *test,
 
 	for (j = 0; j < size; j += 4) {
 		val = pci_endpoint_test_bar_readl(test, barno, j);
-		if (val != 0xA0A0A0A0)
+		if (val != 0xA0A0A0A0) {
+			dev_warn(dev, "BAR%d test failed at index %d\n",
+					barno, j);
 			return false;
+		}
 	}
 
 	return true;
@@ -937,6 +945,11 @@ static const struct pci_endpoint_test_data default_data = {
 	.irq_type = IRQ_TYPE_MSI,
 };
 
+static const struct pci_endpoint_test_data s32_data = {
+	.test_reg_bar = BAR_0,
+	.alignment = SZ_4K,
+	.irq_type = IRQ_TYPE_MSI,
+};
 static const struct pci_endpoint_test_data am654_data = {
 	.test_reg_bar = BAR_2,
 	.alignment = SZ_64K,
@@ -960,6 +973,19 @@ static const struct pci_device_id pci_endpoint_test_tbl[] = {
 	},
 	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_LS1088A),
 	  .driver_data = (kernel_ulong_t)&default_data,
+	},
+	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_LX2160A),
+	  .driver_data = (kernel_ulong_t)&default_data,
+	},
+	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_S32G),
+	  .driver_data = (kernel_ulong_t)&s32_data,
+	},
+	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_S32V),
+	  .driver_data = (kernel_ulong_t)&s32_data,
+	},
+	/* somehow the vendor gets 0x0 and the device last digit 0x2 */
+	{ PCI_DEVICE(0x0, PCI_DEVICE_ID_S32G),
+	  .driver_data = (kernel_ulong_t)&s32_data,
 	},
 	{ PCI_DEVICE_DATA(SYNOPSYS, EDDA, NULL) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_TI, PCI_DEVICE_ID_TI_AM654),
