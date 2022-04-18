@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD 3-clause
 /*
- * NXP HSE Driver - Hardware RNG Support
+ * NXP HSE Driver - Hardware True Random Number Generator Support
  *
  * This file contains the hw_random framework support for HSE hardware TRNG.
  *
- * Copyright 2019-2021 NXP
+ * Copyright 2019-2022 NXP
  */
 
 #include <linux/kernel.h>
