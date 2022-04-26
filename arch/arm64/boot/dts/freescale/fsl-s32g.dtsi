@@ -14,7 +14,6 @@
 #include <dt-bindings/clock/s32g-scmi-clock.h>
 #include <dt-bindings/reset/s32g-scmi-reset.h>
 #include <dt-bindings/net/fsl-s32g-pfeng.h>
-#include <dt-bindings/nvmem/s32-siul2-nvmem.h>
 
 / {
 	sysclk: clk10000000 {
@@ -36,10 +35,18 @@
 		#size-cells = <2>;
 		ranges;
 
-		pfe_reserved_bmu2: pfebufs@83000000 {
+		pfe_reserved_bmu2: pfebufs@34000000 {
 			compatible = "fsl,pfe-bmu2-pool";
-			/* 2 MB */
-			reg = <0 0x83000000 0 0x200000>;
+			/* BMU2: 512 KB */
+			reg = <0 0x34000000 0 0x80000>;
+			no-map;
+			status = "okay";
+		};
+
+		pfe_reserved_rt: pfebufs@34080000 {
+			compatible = "fsl,pfe-rt-pool";
+			/* RT: 128 KB */
+			reg = <0 0x34080000 0 0x20000>;
 			no-map;
 			status = "okay";
 		};
@@ -52,7 +59,7 @@
 			status = "okay";
 		};
 
-		pfe_reserved_bdr: pfebufs@83bf0000 {
+		pfe_reserved_bdr: pfebufs@835e0000 {
 			compatible = "fsl,pfe-bdr-pool";
 			/* 128 KB */
 			reg = <0 0x835e0000 0 0x20000>;
@@ -113,9 +120,10 @@
 			 <&serdes0 PHY_TYPE_XPCS 1 1>;
 		phy-names = "emac0_xpcs", "emac1_xpcs", "emac2_xpcs";
 		dma-coherent;
-		memory-region = <&pfe_reserved_bmu2>,
-				<&pfe_reserved>,
-				<&pfe_reserved_bdr>;
+		memory-region = <&pfe_reserved_bmu2>, <&pfe_reserved_rt>,
+				<&pfe_reserved>, <&pfe_reserved_bdr>;
+		memory-region-names = "pfe-bmu2-pool", "pfe-rt-pool",
+				      "pfe-shared-pool", "pfe-bdr-pool";
 		fsl,fw-class-name = "s32g_pfe_class.fw";
 		fsl,fw-util-name = "s32g_pfe_util.fw";
 		nvmem-cells = <&soc_revision>;
@@ -323,6 +331,7 @@
 		dma-coherent;
 		memory-region = <&pfe_reserved_slave>,
 				<&pfe_reserved_bdr_slave>;
+		memory-region-names = "pfe-shared-pool", "pfe-bdr-pool";
 		nvmem-cells = <&soc_revision>;
 		nvmem-cell-names = "soc_revision";
 		fsl,pfeng-master-hif-channel = <0>;
@@ -372,7 +381,7 @@
 		#size-cells = <2>;
 		status = "okay";
 		pinctrl0: siul2-pinctrl0@4009C000 {
-			compatible = "fsl,s32g-siul2_0-pinctrl";
+			compatible = "nxp,s32g-siul2_0-pinctrl";
 			#pinctrl-cells = <2>;
 			reg = <0x1 0x0 0x0 0x198>,
 			<0x2 0x0 0x0 0x150>;
@@ -383,7 +392,7 @@
 			status = "okay";
 		};
 		gpio0: siul2-gpio0 {
-			compatible = "fsl,s32g-siul2-gpio";
+			compatible = "nxp,s32g-siul2-gpio";
 			gpio-controller;
 			#gpio-cells = <2>;
 				/* GPIO 0-101 */
@@ -434,7 +443,7 @@
 			 <5 0 0x0 0x44010010 0x0 0x34>;
 
 		pinctrl1: siul2-pinctrl1@44010000 {
-			compatible = "fsl,s32g-siul2_1-pinctrl";
+			compatible = "nxp,s32g-siul2_1-pinctrl";
 			#pinctrl-cells = <2>;
 			reg = <0x1 0x0 0x0 0x13C>,
 			<0x2 0x0 0x0 0x5E4>;
@@ -451,7 +460,7 @@
 		 * assume this for many things.
 		 */
 		gpio1: siul2-gpio1 {
-			compatible = "fsl,s32g-siul2-gpio";
+			compatible = "nxp,s32g-siul2-gpio";
 			gpio-controller;
 			#gpio-cells = <2>;
 				/* GPIO 112-190 */
@@ -489,13 +498,13 @@
 		};
 
 		nvram1: nvram@44010000 {
-			compatible = "fsl,s32gen1-siul2_1-nvmem";
+			compatible = "nxp,s32cc-siul2_1-nvmem";
 			reg = <0x0 0x0 0x0 0x10>;
 			#address-cells = <1>;
 			#size-cells = <1>;
 			status = "okay";
 			serdes_presence: serdes_presence@0 {
-				reg = <SERDES_PRESENCE_OFFSET SERDES_PRESENCE_SIZE>;
+				reg = <SERDES_PRESENCE_OFFSET NVRAM_CELL_SIZE>;
 			};
 		};
 	};
@@ -631,97 +640,129 @@
 
 		llce_can_logger0: llce_can_logger0 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 0>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 0>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 0>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger1: llce_can_logger1 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 1>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 1>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 1>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger2: llce_can_logger2 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 2>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 2>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 2>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger3: llce_can_logger3 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 3>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 3>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 3>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger4: llce_can_logger4 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 4>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 4>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 4>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger5: llce_can_logger5 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 5>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 5>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 5>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger6: llce_can_logger6 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 6>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 6>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 6>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger7: llce_can_logger7 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 7>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 7>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 7>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger8: llce_can_logger8 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 8>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 8>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 8>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger9: llce_can_logger9 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 9>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 9>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 9>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger10: llce_can_logger10 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 10>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 10>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 10>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger11: llce_can_logger11 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 11>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 11>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 11>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger12: llce_can_logger12 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 12>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 12>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 12>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger13: llce_can_logger13 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 13>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 13>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 13>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger14: llce_can_logger14 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 14>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 14>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 14>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
 		llce_can_logger15: llce_can_logger15 {
 			compatible = "nxp,s32g-llce-can-logger";
-			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_MB 15>;
+			mboxes = <&llce_mb S32G_LLCE_CAN_LOGGER_CONFIG_MB 15>,
+				<&llce_mb S32G_LLCE_CAN_LOGGER_MB 15>;
+			mbox-names = "config", "rx";
 			status = "okay";
 		};
 
