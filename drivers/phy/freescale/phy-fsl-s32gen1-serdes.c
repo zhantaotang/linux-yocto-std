@@ -119,6 +119,19 @@ static int serdes_phy_reset(struct phy *p)
 	return 0;
 }
 
+static int get_lane_id(struct phy *phy)
+{
+	struct serdes *serdes = phy_get_drvdata(phy);
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(serdes->phys); i++)
+		if (serdes->phys[i] == phy)
+			return i;
+
+	WARN_ON(i == ARRAY_SIZE(serdes->phys));
+	return 0;
+}
+
 static bool pcie_phy_is_locked(struct serdes *serdes)
 {
 	u32 mplla = readl(serdes->ctrl.ss_base + PCIE_PHY_MPLLA_CTRL);
@@ -486,8 +499,9 @@ struct s32gen1_xpcs *s32gen1_phy2xpcs(struct phy *phy)
 {
 	struct serdes *serdes = phy_get_drvdata(phy);
 	struct xpcs_ctrl *xpcs = &serdes->xpcs;
+	int lane_id = get_lane_id(phy);
 
-	return xpcs->phys[phy->id];
+	return xpcs->phys[lane_id];
 }
 EXPORT_SYMBOL_GPL(s32gen1_phy2xpcs);
 
@@ -496,9 +510,10 @@ static int xpcs_phy_configure(struct phy *phy, struct phylink_link_state *state)
 	struct serdes *serdes = phy_get_drvdata(phy);
 	struct xpcs_ctrl *xpcs = &serdes->xpcs;
 	struct device *dev = serdes->dev;
+	int lane_id = get_lane_id(phy);
 	int ret;
 
-	ret = xpcs->ops->config(xpcs->phys[phy->id], NULL);
+	ret = xpcs->ops->config(xpcs->phys[lane_id], NULL);
 	if (ret) {
 		dev_err(dev, "Failed to configure XPCS\n");
 		return ret;
@@ -667,7 +682,6 @@ static struct phy *serdes_xlate(struct device *dev,
 		return ERR_PTR(ret);
 
 	phy = serdes->phys[lane_id];
-	phy->id = lane_id;
 	phy->attrs.mode = mode;
 
 	return phy;
@@ -891,7 +905,6 @@ static int serdes_probe(struct platform_device *pdev)
 		if (IS_ERR(serdes->phys[i]))
 			return PTR_ERR(serdes->phys[i]);
 		phy_set_drvdata(serdes->phys[i], serdes);
-		serdes->phys[i]->id = i;
 	}
 
 	ret = ss_dt_init(pdev, serdes);
