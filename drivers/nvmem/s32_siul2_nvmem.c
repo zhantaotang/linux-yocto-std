@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright 2021 NXP
+ * Copyright 2021-2022 NXP
  */
 
 #include <linux/module.h>
@@ -20,6 +20,8 @@
 #define SIUL2_MIDR1_MINOR_MASK		(0xF << 0)
 #define SIUL2_MIDR1_MAJOR_SHIFT		(4)
 #define SIUL2_MIDR1_MAJOR_MASK		(0xF << SIUL2_MIDR1_MAJOR_SHIFT)
+#define SIUL2_MIDR1_PART_NO_SHIFT	(16)
+#define SIUL2_MIDR1_PART_NO_MASK	GENMASK(25, 16)
 
 /* SIUL2_MIDR2 masks */
 #define SIUL2_MIDR2_SERDES_MASK	BIT(15)
@@ -46,25 +48,69 @@ static struct nvmem_config econfig_1 = {
 	.read_only = true,
 };
 
+static u32 get_variant_bits(u32 value)
+{
+	/* Mapping between G3 variant ID and the PCIe Device ID,
+	 * as described in the "S32G3 Reference Manual rev1.0,
+	 * chapter SerDes Subsystem, section "Device and revision IDs",
+	 * where: index = last 2 digits of the variant
+	 *        value = last hex digit of the PCIe Device ID"
+	 */
+	static const u32 s32g3_variants[] = {
+		[78] = 0x6,
+		[79] = 0x4,
+		[98] = 0x2,
+		[99] = 0x0,
+	};
+
+	/* PCIe variant bits with respect to PCIe Device ID update
+	 * applies only to S32G3 platforms.
+	 */
+	if (value / 100 != 3)
+		return 0;
+
+	value %= 100;
+
+	if (value < ARRAY_SIZE(s32g3_variants))
+		return s32g3_variants[value];
+
+	return 0;
+}
+
 static int s32_siul2_0_nvmem_read(void *context, unsigned int offset,
 				  void *val, size_t bytes)
 {
 	struct s32_siul2_nvmem_data *priv = context;
 	u32 midr1;
-	u32 major, minor;
+	u32 major, minor, part_no, pcie_variant_bits;
 
-	if (offset != SOC_REVISION_OFFSET || bytes != SOC_REVISION_SIZE)
+	if (bytes != NVRAM_CELL_SIZE)
 		return -EOPNOTSUPP;
 
-	midr1 = ioread32(priv->siul2 + SIUL2_MIDR1_OFF);
-	major = (midr1 & SIUL2_MIDR1_MAJOR_MASK) >> SIUL2_MIDR1_MAJOR_SHIFT;
-	minor = midr1 & SIUL2_MIDR1_MINOR_MASK;
+	if (offset == SOC_REVISION_OFFSET) {
+		midr1 = ioread32(priv->siul2 + SIUL2_MIDR1_OFF);
+		major = (midr1 & SIUL2_MIDR1_MAJOR_MASK) >> SIUL2_MIDR1_MAJOR_SHIFT;
+		minor = midr1 & SIUL2_MIDR1_MINOR_MASK;
 
-	/* Bytes format: (MAJOR+1).MINOR.0.0 */
-	*(u32 *)val = (major + 1) << S32_SOC_REV_MAJOR_SHIFT
-			| minor << S32_SOC_REV_MINOR_SHIFT;
+		/* Bytes format: (MAJOR+1).MINOR.0.0 */
+		*(u32 *)val = (major + 1) << S32_SOC_REV_MAJOR_SHIFT
+				| minor << S32_SOC_REV_MINOR_SHIFT;
 
-	return 0;
+		return 0;
+	}
+
+	if (offset == PCIE_VARIANT_OFFSET) {
+		midr1 = ioread32(priv->siul2 + SIUL2_MIDR1_OFF);
+		part_no = (midr1 & SIUL2_MIDR1_PART_NO_MASK) >> SIUL2_MIDR1_PART_NO_SHIFT;
+		pcie_variant_bits = get_variant_bits(part_no);
+
+		/* Bytes format: 0.0.0.PCIE_VARIANT */
+		*(u32 *)val = pcie_variant_bits << S32_PCIE_DEV_VARIANT;
+
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
 }
 
 static int s32_siul2_1_nvmem_read(void *context, unsigned int offset,
@@ -74,7 +120,7 @@ static int s32_siul2_1_nvmem_read(void *context, unsigned int offset,
 	u32 midr2;
 	u32 serdes;
 
-	if (offset != SERDES_PRESENCE_OFFSET || bytes != SERDES_PRESENCE_SIZE)
+	if (offset != SERDES_PRESENCE_OFFSET || bytes != NVRAM_CELL_SIZE)
 		return -EOPNOTSUPP;
 
 	midr2 = ioread32(priv->siul2 + SIUL2_MIDR2_OFF);
@@ -85,8 +131,8 @@ static int s32_siul2_1_nvmem_read(void *context, unsigned int offset,
 }
 
 static const struct of_device_id s32_siul2_nvmem_match[] = {
-	{ .compatible = "fsl,s32gen1-siul2_0-nvmem", },
-	{ .compatible = "fsl,s32gen1-siul2_1-nvmem", },
+	{ .compatible = "nxp,s32cc-siul2_0-nvmem", },
+	{ .compatible = "nxp,s32cc-siul2_1-nvmem", },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, s32_siul2_nvmem_match);
@@ -114,10 +160,10 @@ static int s32_siul2_nvmem_probe(struct platform_device *pdev)
 	}
 
 	priv->dev = dev;
-	if (of_device_is_compatible(np, "fsl,s32gen1-siul2_0-nvmem")) {
+	if (of_device_is_compatible(np, "nxp,s32cc-siul2_0-nvmem")) {
 		econfig = &econfig_0;
 		econfig->reg_read = s32_siul2_0_nvmem_read;
-	} else if (of_device_is_compatible(np, "fsl,s32gen1-siul2_1-nvmem")) {
+	} else if (of_device_is_compatible(np, "nxp,s32cc-siul2_1-nvmem")) {
 		econfig = &econfig_1;
 		econfig->reg_read = s32_siul2_1_nvmem_read;
 	} else {

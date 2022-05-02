@@ -11,7 +11,6 @@
 #include "fsl-s32-gen1.dtsi"
 #include <dt-bindings/pinctrl/s32r45-pinctrl.h>
 #include <dt-bindings/clock/s32r45-scmi-clock.h>
-#include <dt-bindings/nvmem/s32-siul2-nvmem.h>
 
 / {
 	model = "Freescale S32R45";
@@ -137,7 +136,7 @@
 			 <5 0 0x0 0x4403C010 0x0 0x34>;
 
 		pinctrl0: siul2-pinctrl0@4009C000 {
-			compatible = "fsl,s32r45-siul2_0-pinctrl";
+			compatible = "nxp,s32r45-siul2_0-pinctrl";
 			#pinctrl-cells = <2>;
 			reg = <0x1 0x0 0x0 0x198>,
 			<0x2 0x0 0x0 0x150>;
@@ -148,7 +147,7 @@
 			status = "okay";
 		};
 		gpio0: siul2-gpio0 {
-			compatible = "fsl,s32gen1-siul2-gpio";
+			compatible = "nxp,s32cc-siul2-gpio";
 			#pinctrl-cells = <2>;
 			gpio-controller;
 			#gpio-cells = <2>;
@@ -206,7 +205,7 @@
 
 		pinctrl1: siul2-pinctrl1@4403C000 {
 			compatible =
-				"fsl,s32r45-siul2_1-pinctrl";
+				"nxp,s32r45-siul2_1-pinctrl";
 			#pinctrl-cells = <2>;
 			reg = <0x1 0x0 0x0 0x80>,
 			<0x2 0x0 0x0 0x2CC>;
@@ -224,7 +223,7 @@
 		 */
 
 		gpio1: siul2-gpio1 {
-			compatible = "fsl,s32gen1-siul2-gpio";
+			compatible = "nxp,s32cc-siul2-gpio";
 			gpio-controller;
 			#gpio-cells = <2>;
 			#pinctrl-cells = <2>;
@@ -237,13 +236,13 @@
 		};
 
 		nvram1: nvram@4403C000 {
-			compatible = "fsl,s32gen1-siul2_1-nvmem";
+			compatible = "nxp,s32cc-siul2_1-nvmem";
 			reg = <0x0 0x0 0x0 0x10>;
 			#address-cells = <1>;
 			#size-cells = <1>;
 			status = "okay";
 			serdes_presence: serdes_presence@0 {
-				reg = <SERDES_PRESENCE_OFFSET SERDES_PRESENCE_SIZE>;
+				reg = <SERDES_PRESENCE_OFFSET NVRAM_CELL_SIZE>;
 			};
 		};
 	};
