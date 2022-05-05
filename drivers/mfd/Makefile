@@ -280,4 +280,3 @@ rsmu-spi-objs			:= rsmu_core.o rsmu_spi.o
 obj-$(CONFIG_MFD_RSMU_I2C)	+= rsmu-i2c.o
 obj-$(CONFIG_MFD_RSMU_SPI)	+= rsmu-spi.o
 obj-$(CONFIG_S32GEN1_MC_ME) 	+= s32gen1-mc_me.o
-obj-$(CONFIG_S32GEN1_MC_RGM) 	+= s32gen1-mc_rgm.o
