@@ -9,6 +9,8 @@
 
 #include "core.h"
 
+#define SPINOR_OP_MACRONIX_DTR_RD	0xEE
+
 static int
 mx25l25635_post_bfpt_fixups(struct spi_nor *nor,
 			    const struct sfdp_parameter_header *bfpt_header,
@@ -31,6 +33,21 @@ mx25l25635_post_bfpt_fixups(struct spi_nor *nor,
 
 static struct spi_nor_fixups mx25l25635_fixups = {
 	.post_bfpt = mx25l25635_post_bfpt_fixups,
+};
+
+static void
+mx25uw51245g_post_sfdp_fixups(struct spi_nor *nor)
+{
+	/* Set the Fast Read settings. */
+	spi_nor_set_read_settings(&nor->params->reads[SNOR_CMD_READ_8_8_8_DTR],
+				  0, 10, SPINOR_OP_MACRONIX_DTR_RD,
+				  SNOR_PROTO_8_8_8_DTR);
+
+	nor->cmd_ext_type = SPI_NOR_EXT_REPEAT;
+}
+
+static struct spi_nor_fixups mx25uw51245g_fixups = {
+	.post_sfdp = mx25uw51245g_post_sfdp_fixups,
 };
 
 static const struct flash_info macronix_parts[] = {
@@ -75,7 +92,8 @@ static const struct flash_info macronix_parts[] = {
 			      SPI_NOR_QUAD_READ) },
 	{ "mx25l25655e", INFO(0xc22619, 0, 64 * 1024, 512, 0) },
 	{ "mx25uw51245g", INFO(0xc2813a, 0, 64 * 1024, 1024,
-			SPI_NOR_OCTAL_DTR_READ | SPI_NOR_4B_OPCODES) },
+			SPI_NOR_OCTAL_DTR_READ | SPI_NOR_4B_OPCODES)
+		.fixups = &mx25uw51245g_fixups },
 	{ "mx66l51235f", INFO(0xc2201a, 0, 64 * 1024, 1024,
 			      SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ |
 			      SPI_NOR_4B_OPCODES) },
