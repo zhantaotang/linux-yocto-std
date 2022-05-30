@@ -169,6 +169,18 @@ SPI_MEM_OP(SPI_MEM_OP_CMD(0x99, 8),
 	   SPI_MEM_OP_NO_DUMMY,
 	   SPI_MEM_OP_NO_DATA);
 
+static u8 get_cmd_opcode(const struct spi_mem_op *op)
+{
+	/*
+	 * No matter "repeat" or "revert" mode, valid opcode is always at
+	 * the higher byte.
+	 */
+	if (op->cmd.dtr)
+		return op->cmd.opcode >> 8;
+	else
+		return op->cmd.opcode;
+}
+
 static u32 clear_fifos(struct fsl_qspi *q)
 {
 	u32 mcr_reg;
@@ -338,7 +350,7 @@ static bool fill_qspi_cmd(struct fsl_qspi *q,
 {
 	u16 lut;
 	int status;
-	u8 opcode = op->cmd.opcode;
+	u8 opcode  = get_cmd_opcode(op);
 	u8 lut_cmd;
 
 	switch (op->cmd.buswidth) {
@@ -475,7 +487,7 @@ static bool fill_qspi_data(struct fsl_qspi *q,
 static bool add_op_to_lutdb(struct fsl_qspi *q,
 			    const struct spi_mem_op *op, u8 *index)
 {
-	u8 opcode = op->cmd.opcode;
+	u8 opcode  = get_cmd_opcode(op);
 	struct lut_config *lut_conf;
 	u16 lut;
 	int status;
@@ -545,7 +557,7 @@ static void set_lut(struct fsl_qspi *q, u8 index, u8 opcode)
 static bool enable_op(struct fsl_qspi *q, const struct spi_mem_op *op)
 {
 	u8 lut_index;
-	u8 opcode = op->cmd.opcode;
+	u8 opcode  = get_cmd_opcode(op);
 
 	if (q->luts_next_config >= S32GEN1_MAX_LUTS_CONFIGS)
 		return false;
@@ -568,17 +580,19 @@ static bool enable_operators(struct fsl_qspi *q,
 	size_t i;
 	const struct spi_mem_op *op;
 	u8 *cfg;
+	u8 opcode;
 
 	for (i = 0; i < n_ops; i++) {
 		op = ops[i].op;
 		cfg = ops[i].cfg;
+		opcode = get_cmd_opcode(op);
 
 		/* In case it's already enabled */
-		q->lut_configs[op->cmd.opcode].enabled = false;
+		q->lut_configs[opcode].enabled = false;
 		res = enable_op(q, op);
-		*cfg = q->lut_configs[op->cmd.opcode].index;
+		*cfg = q->lut_configs[opcode].index;
 
-		if (!res || !q->lut_configs[op->cmd.opcode].enabled)
+		if (!res || !q->lut_configs[opcode].enabled)
 			return false;
 	}
 
@@ -590,11 +604,13 @@ static void disable_operators(struct fsl_qspi *q,
 {
 	size_t i;
 	const struct spi_mem_op *op;
+	u8 opcode;
 
 	for (i = 0; i < n_ops; i++) {
 		op = ops[i].op;
+		opcode = get_cmd_opcode(op);
 
-		q->lut_configs[op->cmd.opcode].enabled = false;
+		q->lut_configs[opcode].enabled = false;
 	}
 }
 
@@ -1076,16 +1092,17 @@ int s32gen1_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 	u8 lut_cfg;
 	bool enabled = false;
 	int ret;
+	u8 opcode  = get_cmd_opcode(op);
 
 	lut_cfg = LUT_INVALID_INDEX;
 	if (!s32gen1_supports_op(mem, op))
 		return -1;
 
-	enabled = q->lut_configs[op->cmd.opcode].enabled;
+	enabled = q->lut_configs[opcode].enabled;
 	if (!enabled)
 		return -1;
 
-	lut_cfg = q->lut_configs[op->cmd.opcode].index;
+	lut_cfg = q->lut_configs[opcode].index;
 	if (lut_cfg == LUT_INVALID_INDEX)
 		return -1;
 
