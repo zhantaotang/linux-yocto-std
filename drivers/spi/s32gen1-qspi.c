@@ -114,6 +114,8 @@
 
 #define QUADSPI_S32GEN1_HIGH_FREQUENCY_VALUE	200000000
 
+#define S32GEN1_LAST_CONF_INDEX (S32GEN1_MAX_LUTS_CONFIGS - 1)
+
 struct qspi_op {
 	const struct spi_mem_op *op;
 	u8 *cfg;
@@ -519,10 +521,10 @@ static bool add_op_to_lutdb(struct fsl_qspi *q,
 
 	if (!lut_conf->index) {
 		lut_conf->index = q->luts_next_config;
-		q->luts_next_config++;
+		if (q->luts_next_config != S32GEN1_LAST_CONF_INDEX)
+			q->luts_next_config++;
 	}
 	*index = lut_conf->index;
-
 	return true;
 }
 
@@ -559,15 +561,13 @@ static bool enable_op(struct fsl_qspi *q, const struct spi_mem_op *op)
 	u8 lut_index;
 	u8 opcode  = get_cmd_opcode(op);
 
-	if (q->luts_next_config >= S32GEN1_MAX_LUTS_CONFIGS)
-		return false;
-
 	if (!q->lut_configs[opcode].enabled) {
 		if (!add_op_to_lutdb(q, op, &lut_index))
 			return false;
 
 		set_lut(q, lut_index, opcode);
-		q->lut_configs[opcode].enabled = true;
+		if (lut_index < S32GEN1_LAST_CONF_INDEX)
+			q->lut_configs[opcode].enabled = true;
 	}
 
 	return true;
@@ -1098,12 +1098,12 @@ int s32gen1_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
 	if (!s32gen1_supports_op(mem, op))
 		return -1;
 
-	enabled = q->lut_configs[opcode].enabled;
-	if (!enabled)
-		return -1;
-
 	lut_cfg = q->lut_configs[opcode].index;
 	if (lut_cfg == LUT_INVALID_INDEX)
+		return -1;
+
+	enabled = q->lut_configs[opcode].enabled;
+	if (!enabled && lut_cfg != S32GEN1_LAST_CONF_INDEX)
 		return -1;
 
 	/* Register and memory write */
