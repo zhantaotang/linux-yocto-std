@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/clock/fsl-stm.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Freescale STM timer used as clockevents
+
+maintainers:
+  - Larisa Grigore <larisa.grigore@nxp.com>
+
+allOf:
+  - $ref: "/schemas/serial/rs485.yaml"
+
+properties:
+  compatible:
+    oneOf:
+      - enum:
+          - nxp,s32cc-stm
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    items:
+      - description: stm clock
+
+  clock-names:
+    items:
+      - const: stm
+
+  cpu:
+    maxItems: 1
+
+  rs485-rts-active-low: true
+  linux,rs485-enabled-at-boot-time: true
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - cpu
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/s32gen1-scmi-clock.h>
+
+    stm0: stm@4011C000{
+        compatible = "nxp,s32cc-stm";
+        reg = <0x4011C000 0x3000>;
+        interrupts= <0 24 4>;
+        clocks = <&clks S32GEN1_SCMI_CLK_STM_MODULE>;
+        clock-names = "stm";
+        cpu = <2>;
+    };
+

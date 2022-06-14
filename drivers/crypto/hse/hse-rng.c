@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD 3-clause
 /*
- * NXP HSE Driver - Hardware RNG Support
+ * NXP HSE Driver - Hardware True Random Number Generator Support
  *
  * This file contains the hw_random framework support for HSE hardware TRNG.
  *
- * Copyright 2019-2021 NXP
+ * Copyright 2019-2022 NXP
  */
 
 #include <linux/kernel.h>
@@ -17,7 +17,7 @@
 #define HSE_RNG_QUALITY    1024u /* number of entropy bits per 1024 bits */
 
 #define HSE_RNG_CACHE_MIN    64u /* minimum threshold for cache refill */
-#define HSE_RNG_CACHE_MAX    512u /* total size of driver internal cache */
+#define HSE_RNG_CACHE_MAX    CONFIG_CRYPTO_DEV_NXP_HSE_RNG_CACHE /* total */
 
 /**
  * struct hse_rng_ctx - RNG context
@@ -75,7 +75,7 @@ static void hse_rng_refill_cache(struct hwrng *rng)
 	}
 
 	ctx->cache_idx = 0; /* discard remining data bytes */
-	ctx->srv_desc.rng_req.random_num_len = HSE_RNG_CACHE_MAX;
+	ctx->srv_desc.rng_req.random_num_len = rounddown(HSE_RNG_CACHE_MAX, 64);
 	ctx->srv_desc.rng_req.random_num = ctx->cache_dma;
 
 	err = hse_srv_req_async(ctx->dev, HSE_CHANNEL_ANY, &ctx->srv_desc, ctx,
@@ -136,7 +136,7 @@ static int hse_rng_read(struct hwrng *rng, void *buf, size_t count, bool wait)
 	if (unlikely(dma_mapping_error(ctx->dev, buf_dma)))
 		return -ENOMEM;
 
-	srv_desc.srv_id = _get_rng_srv_id(ctx->dev);
+	srv_desc.srv_id = HSE_SRV_ID_GET_RANDOM_NUM;
 	srv_desc.rng_req.rng_class = HSE_RNG_CLASS_PTG3;
 	srv_desc.rng_req.random_num_len = count;
 	srv_desc.rng_req.random_num = buf_dma;
@@ -160,7 +160,7 @@ static int hse_rng_init(struct hwrng *rng)
 
 	mutex_init(&ctx->req_lock);
 
-	ctx->srv_desc.srv_id = _get_rng_srv_id(ctx->dev);
+	ctx->srv_desc.srv_id = HSE_SRV_ID_GET_RANDOM_NUM;
 	ctx->srv_desc.rng_req.rng_class = HSE_RNG_CLASS_PTG3;
 
 	ctx->cache_dma = dma_map_single(ctx->dev, ctx->cache, HSE_RNG_CACHE_MAX,

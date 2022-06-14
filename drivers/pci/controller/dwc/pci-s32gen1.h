@@ -2,7 +2,7 @@
 /*
  * PCIe host controller driver for Freescale S32Gen1 SoCs
  *
- * Copyright 2020-2021 NXP
+ * Copyright 2020-2022 NXP
  */
 
 #ifndef PCIE_S32GEN1_H
@@ -15,15 +15,13 @@
 #include <linux/phy/phy.h>
 #include <uapi/linux/pci_regs.h>
 #include <linux/pcie/fsl-s32gen1-pcie-phy-submode.h>
+
 #include "pcie-designware.h"
+#include "pci-ioctl-s32.h"
+#include "pci-dma-s32.h"
 
 #define BUILD_BIT_VALUE(field, x) (((x) & (1)) << field##_BIT)
 #define BUILD_MASK_VALUE(field, x) (((x) & (field##_MASK)) << field##_LSB)
-
-#ifdef CONFIG_PCI_DW_DMA
-#include <linux/dma-mapping.h>
-#include "pci-dma-s32.h"
-#endif
 
 /* PCIe MSI capabilities register */
 #define PCI_MSI_CAP		0x50
@@ -65,6 +63,11 @@
 #define to_s32gen1_from_dw_pcie(x) \
 	container_of(x, struct s32gen1_pcie, pcie)
 
+#ifdef CONFIG_PCI_DW_DMA
+#define to_s32gen1_from_dma_info(x) \
+		container_of(x, struct s32gen1_pcie, dma)
+#endif
+
 enum pcie_dev_type {
 	PCIE_EP = 0x0,
 	PCIE_RC = 0x4
@@ -74,11 +77,6 @@ enum pcie_link_speed {
 	GEN1 = 0x1,
 	GEN2 = 0x2,
 	GEN3 = 0x3
-};
-
-struct callback {
-	void (*call_back)(u32 arg);
-	struct list_head callback_list;
 };
 
 struct s32gen1_pcie {
@@ -94,8 +92,6 @@ struct s32gen1_pcie {
 	 * dbi in struct dw_pcie, so define only ctrl here
 	 */
 	void __iomem *ctrl_base;
-	void __iomem *phy_base;
-	void __iomem *atu_base;
 
 	int id;
 	enum pcie_phy_mode phy_mode;
@@ -106,40 +102,15 @@ struct s32gen1_pcie {
 	struct dma_info	dma;
 #endif
 
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-	struct dentry	*dir;
-	struct userspace_info uspace;
-#endif
-
-	/* TODO: change this to a list */
+	/* TODO: change call_back to a list */
 	void (*call_back)(u32 arg);
+	struct s32_userspace_info uinfo;
+
 	struct phy *phy0, *phy1;
-};
 
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-struct userspace_info {
-	int			user_pid;
-	struct siginfo	info;    /* signal information */
-	int (*send_signal_to_user)(struct s32gen1_pcie *s32gen1_pcie);
-};
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
+	struct resource shared_mem;
 #endif
-
-
-struct s32_inbound_region {
-	int pcie_id; /* must match the id of a device tree pcie node */
-	u32 bar_nr;
-	u32 target_addr;
-	u32 region; /* for backwards compatibility */
-};
-struct s32_outbound_region {
-	int pcie_id; /* must match the id of a device tree pcie node */
-	u64 target_addr;
-	u64 base_addr;
-	u32 size;
-	/* region_type - for backwards compatibility;
-	 * must be PCIE_ATU_TYPE_MEM
-	 */
-	u32 region_type;
 };
 
 void dw_pcie_writel_ctrl(struct s32gen1_pcie *pci, u32 reg, u32 val);

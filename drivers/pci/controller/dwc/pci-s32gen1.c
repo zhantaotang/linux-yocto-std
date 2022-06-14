@@ -5,7 +5,7 @@
  * Copyright 2020-2022 NXP
  */
 
-#ifdef CONFIG_PCI_S32GEN1_DEBUG
+#ifdef CONFIG_PCI_S32_DEBUG
 #define DEBUG
 #endif
 
@@ -28,26 +28,16 @@
 #include <linux/ioport.h>
 #include <soc/s32/revision.h>
 
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-#include <linux/debugfs.h>
-#include <linux/fs.h>
-#include <linux/sched/signal.h>
-#include <linux/uaccess.h>
-#endif
-
 #include "pci-s32gen1-regs.h"
 #include "pci-s32gen1.h"
 #include "../../pci.h"
 
-#ifdef CONFIG_PCI_S32GEN1_DEBUG_READS
-#define dev_dbg_r dev_dbg
-#else
-#define dev_dbg_r(fmt, ...)
-#endif
-#ifdef CONFIG_PCI_S32GEN1_DEBUG_WRITES
+#ifdef CONFIG_PCI_S32_DEBUG_WRITES
 #define dev_dbg_w dev_dbg
+#define PTR_FMT "%px"
 #else
 #define dev_dbg_w(fmt, ...)
+#define PTR_FMT "%p"
 #endif
 
 #define PCIE_LINKUP_MASK	(PCIE_SS_SMLH_LINK_UP | PCIE_SS_RDLH_LINK_UP | \
@@ -60,6 +50,8 @@
 
 /* PHY link timeout */
 #define PCIE_LINK_TIMEOUT_MS	1000
+#define PCIE_LINK_TIMEOUT_US	(PCIE_LINK_TIMEOUT_MS * USEC_PER_MSEC)
+#define PCIE_LINK_WAIT_US	100
 
 #define PCIE_EP_RC_MODE(ep_mode) ((ep_mode) ? "EndPoint" : "RootComplex")
 
@@ -68,6 +60,48 @@
 #define PCI_SUBCLASS_OFF	16
 
 #define PCIE_EP_DEFAULT_BAR_SIZE	SZ_1M
+#define PCI_BASE_ADDRESS_MEM_NON_PREFETCH	0x00	/* non-prefetchable */
+#define PCIE_EP_BAR_DEFAULT_INIT_FLAGS	(PCI_BASE_ADDRESS_SPACE_MEMORY | \
+			PCI_BASE_ADDRESS_MEM_TYPE_32 | \
+			PCI_BASE_ADDRESS_MEM_NON_PREFETCH)
+
+#ifdef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
+
+#ifndef CONFIG_SYS_PCI_EP_MEMORY_BASE
+#define CONFIG_SYS_PCI_EP_MEMORY_BASE 0xc0000000
+#endif /* CONFIG_SYS_PCI_EP_MEMORY_BASE */
+
+/* EP BARs */
+
+#define PCIE_EP_BAR0_ADDR		CONFIG_SYS_PCI_EP_MEMORY_BASE
+#define PCIE_EP_BAR0_SIZE		SZ_1M
+#define PCIE_EP_BAR1_ADDR		(PCIE_EP_BAR0_ADDR + PCIE_EP_BAR0_SIZE)
+#define PCIE_EP_BAR1_SIZE		0
+#define PCIE_EP_BAR2_ADDR		(PCIE_EP_BAR1_ADDR + PCIE_EP_BAR1_SIZE)
+#define PCIE_EP_BAR2_SIZE		(4 * SZ_1M)
+#define PCIE_EP_BAR3_ADDR		(PCIE_EP_BAR2_ADDR + PCIE_EP_BAR2_SIZE)
+#define PCIE_EP_BAR3_SIZE		0
+#define PCIE_EP_BAR4_ADDR		(PCIE_EP_BAR3_ADDR + PCIE_EP_BAR3_SIZE)
+#define PCIE_EP_BAR4_SIZE		0
+#define PCIE_EP_BAR5_ADDR		(PCIE_EP_BAR4_ADDR + PCIE_EP_BAR4_SIZE)
+#define PCIE_EP_BAR5_SIZE		0
+
+#define PCIE_EP_BAR_INIT(bar_no) \
+		{PCIE_EP_BAR ## bar_no ## _ADDR, \
+			NULL, \
+			PCIE_EP_BAR ## bar_no ## _SIZE, \
+			BAR_ ## bar_no, \
+			PCIE_EP_BAR_DEFAULT_INIT_FLAGS}
+
+static struct pci_epf_bar s32gen1_ep_bars[] = {
+		PCIE_EP_BAR_INIT(0),
+		PCIE_EP_BAR_INIT(1),
+		PCIE_EP_BAR_INIT(2),
+		PCIE_EP_BAR_INIT(3),
+		PCIE_EP_BAR_INIT(4),
+		PCIE_EP_BAR_INIT(5)
+};
+#endif
 
 #define PCI_DEVICE_ID_SHIFT	16
 
@@ -93,7 +127,7 @@ static inline void s32gen1_pcie_write(struct dw_pcie *pci,
 	int ret;
 	struct s32gen1_pcie *s32_pci = to_s32gen1_from_dw_pcie(pci);
 
-#ifdef CONFIG_PCI_S32GEN1_DEBUG_WRITES
+#ifdef CONFIG_PCI_S32_DEBUG_WRITES
 	if ((uintptr_t)base == (uintptr_t)(s32_pci->ctrl_base))
 		dev_dbg_w(pci->dev, "W%d(ctrl+0x%x, 0x%x)\n",
 			(int)size * 8, (u32)(reg), (u32)(val));
@@ -106,6 +140,11 @@ static inline void s32gen1_pcie_write(struct dw_pcie *pci,
 	else if ((uintptr_t)base == (uintptr_t)(pci->dbi_base2))
 		dev_dbg_w(pci->dev, "W%d(dbi2+0x%x, 0x%x)\n",
 			(int)size * 8, (u32)(reg), (u32)(val));
+#ifdef CONFIG_PCI_DW_DMA
+	else if ((uintptr_t)base == (uintptr_t)(s32_pci->dma.dma_base))
+		dev_dbg_w(pci->dev, "W%d(dma+0x%x, 0x%x)\n",
+			(int)size * 8, (u32)(reg), (u32)(val));
+#endif
 	else
 		dev_dbg_w(pci->dev, "W%d(%lx+0x%x, 0x%x)\n",
 			(int)size * 8, (uintptr_t)(base), (u32)(reg), (u32)(val));
@@ -116,6 +155,17 @@ static inline void s32gen1_pcie_write(struct dw_pcie *pci,
 		dev_err(pci->dev, "(pcie%d): Write to address 0x%lx failed\n",
 			s32_pci->id, (uintptr_t)(base + reg));
 }
+
+#if (defined(CONFIG_PCI_DW_DMA) && defined(CONFIG_PCI_S32_DEBUG_WRITES))
+/* Allow printing DMA writes */
+static inline void s32gen1_pcie_write_dma(struct dma_info *di,
+		void __iomem *base, u32 reg, size_t size, u32 val)
+{
+	struct s32gen1_pcie *s32_pci = to_s32gen1_from_dma_info(di);
+
+	s32gen1_pcie_write(&s32_pci->pcie, base, reg, size, val);
+}
+#endif
 
 void dw_pcie_writel_ctrl(struct s32gen1_pcie *pci, u32 reg, u32 val)
 {
@@ -141,56 +191,76 @@ struct s32gen1_pcie_ep_node {
 };
 
 #ifdef CONFIG_PCI_DW_DMA
+
+struct dma_info *dw_get_dma_info(struct dw_pcie *pcie)
+{
+	struct s32gen1_pcie *s32_pp =
+		to_s32gen1_from_dw_pcie(pcie);
+	return &s32_pp->dma;
+}
+
 static irqreturn_t s32gen1_pcie_dma_handler(int irq, void *arg)
 {
 	struct s32gen1_pcie *s32_pp = arg;
-	struct dw_pcie *pcie = &(s32_pp->pcie);
 	struct dma_info *di = &(s32_pp->dma);
+	u32 dma_error = DMA_ERR_NONE;
 
-	u32 val_write = 0;
-	u32 val_read = 0;
-
-	val_write = dw_pcie_readl_dbi(pcie, PCIE_DMA_WRITE_INT_STATUS);
-	val_read = dw_pcie_readl_dbi(pcie, PCIE_DMA_READ_INT_STATUS);
+	u32 val_write = dw_pcie_readl_dma(di, PCIE_DMA_WRITE_INT_STATUS);
+	u32 val_read = dw_pcie_readl_dma(di, PCIE_DMA_READ_INT_STATUS);
 
 	if (val_write) {
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
 		bool signal = (di->wr_ch.status == DMA_CH_RUNNING);
+
+		dma_error = dw_handle_dma_irq_write(di, val_write);
+		if (dma_error != DMA_ERR_NONE)
+			dev_info(s32_pp->pcie.dev, "dma write error 0x%0x.\n",
+					dma_error);
+#ifdef CONFIG_PCI_EPF_TEST
+		else if (di->complete)
+			complete(di->complete);
 #endif
-		dw_handle_dma_irq_write(pcie, di, val_write);
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-		if (signal && s32_pp->uspace.send_signal_to_user)
-			s32_pp->uspace.send_signal_to_user(s32_pp);
-#endif
+
+		if (signal && s32_pp->uinfo.send_signal_to_user)
+			s32_pp->uinfo.send_signal_to_user(&s32_pp->uinfo);
 
 		if (s32_pp->call_back)
 			s32_pp->call_back(val_write);
 	}
 	if (val_read) {
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
 		bool signal = (di->rd_ch.status == DMA_CH_RUNNING);
+
+		dma_error = dw_handle_dma_irq_read(di, val_read);
+		if (dma_error != DMA_ERR_NONE)
+			dev_info(s32_pp->pcie.dev, "dma read error 0x%0x.\n",
+					dma_error);
+#ifdef CONFIG_PCI_EPF_TEST
+		else if (di->complete)
+			complete(di->complete);
 #endif
-		dw_handle_dma_irq_read(pcie, di, val_read);
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-		if (signal && s32_pp->uspace.send_signal_to_user)
-			s32_pp->uspace.send_signal_to_user(s32_pp);
-#endif
+
+		if (signal && s32_pp->uinfo.send_signal_to_user)
+			s32_pp->uinfo.send_signal_to_user(&s32_pp->uinfo);
 	}
 
 	return IRQ_HANDLED;
 }
 #endif /* CONFIG_PCI_DW_DMA */
 
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-ssize_t s32gen1_ioctl(struct file *filp, u32 cmd,
-		unsigned long data);
+struct s32_userspace_info *dw_get_userspace_info(struct dw_pcie *pcie)
+{
+	struct s32gen1_pcie *s32_pci = to_s32gen1_from_dw_pcie(pcie);
 
-static const struct file_operations s32gen1_pcie_ep_dbgfs_fops = {
-	.owner = THIS_MODULE,
-	.open = simple_open,
-	.unlocked_ioctl = s32gen1_ioctl,
-};
-#endif /* CONFIG_PCI_S32GEN1_ACCESS_FROM_USER */
+	return &s32_pci->uinfo;
+}
+
+void s32_register_callback(struct dw_pcie *pcie,
+		void (*call_back)(u32 arg))
+{
+	struct s32gen1_pcie *s32_pci = to_s32gen1_from_dw_pcie(pcie);
+
+	s32_pci->call_back = call_back;
+}
+EXPORT_SYMBOL(s32_register_callback);
 
 static bool s32gen1_has_msi_parent(struct pcie_port *pp)
 {
@@ -273,10 +343,15 @@ struct s32gen1_pcie *s32_get_dw_pcie(int pcie_ep_id)
 
 	mutex_lock(&s32gen1_pcie_ep_list_mutex);
 	list_for_each_entry(pci_node, &s32gen1_pcie_ep_list, list) {
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
 		if (pci_node->ep->id == pcie_ep_id) {
 			res = pci_node->ep;
 			break;
 		}
+#else
+		res = pci_node->ep;
+		break;
+#endif
 	}
 	mutex_unlock(&s32gen1_pcie_ep_list_mutex);
 
@@ -323,9 +398,6 @@ static void s32gen1_pcie_ep_init(struct dw_pcie_ep *ep)
 {
 	struct dw_pcie *pcie;
 	u32 tmp = 0;
-#ifndef CONFIG_PCI_EPF_TEST
-	int bar;
-#endif
 
 	if (!ep) {
 		pr_err("%s: No S32Gen1 EP configuration found\n", __func__);
@@ -340,7 +412,6 @@ static void s32gen1_pcie_ep_init(struct dw_pcie_ep *ep)
 
 	dw_pcie_dbi_ro_wr_en(pcie);
 
-#ifndef CONFIG_PCI_EPF_TEST
 	/*
 	 * Configure the class and revision for the EP device,
 	 * to enable human friendly enumeration by the RC (e.g. by lspci)
@@ -350,7 +421,6 @@ static void s32gen1_pcie_ep_init(struct dw_pcie_ep *ep)
 			((PCI_BASE_CLASS_PROCESSOR << PCI_BASE_CLASS_OFF) |
 			(PCI_SUBCLASS_OTHER << PCI_SUBCLASS_OFF));
 	dw_pcie_writel_dbi(pcie, PCI_CLASS_REVISION, tmp);
-#endif
 
 	dev_dbg(pcie->dev, "%s: Enable MSI/MSI-X capabilities\n", __func__);
 
@@ -361,16 +431,6 @@ static void s32gen1_pcie_ep_init(struct dw_pcie_ep *ep)
 	/* Enable MSI-Xs by setting the capability bit */
 	tmp = dw_pcie_readl_dbi(pcie, PCI_MSIX_CAP) | MSIX_EN;
 	dw_pcie_writel_dbi(pcie, PCI_MSIX_CAP, tmp);
-
-	dw_pcie_dbi_ro_wr_dis(pcie);
-
-#ifndef CONFIG_PCI_EPF_TEST
-	/* Reset the BARs if not configured later by EPF */
-	for (bar = BAR_0; bar <= BAR_5; bar++)
-		dw_pcie_ep_reset_bar(pcie, bar);
-#endif
-
-	dw_pcie_dbi_ro_wr_en(pcie);
 
 	/* CMD reg:I/O space, MEM space, and Bus Master Enable */
 	tmp = dw_pcie_readl_dbi(pcie, PCI_COMMAND) |
@@ -392,13 +452,22 @@ int s32_pcie_setup_outbound(struct s32_outbound_region *ptrOutb)
 		return -EINVAL;
 	}
 
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
 	s32gen1_pcie_ep = s32_get_dw_pcie(ptrOutb->pcie_id);
-
 	if (IS_ERR(s32gen1_pcie_ep)) {
 		pr_err("%s: No S32Gen1 EP configuration found for PCIe%d\n",
 			__func__, ptrOutb->pcie_id);
 		return -ENODEV;
 	}
+#else
+	s32gen1_pcie_ep = s32_get_dw_pcie(0);
+	if (IS_ERR(s32gen1_pcie_ep)) {
+		pr_err("%s: No S32Gen1 EP configuration found\n",
+			__func__);
+		return -ENODEV;
+	}
+#endif
+
 	dev_dbg(s32gen1_pcie_ep->pcie.dev, "%s\n", __func__);
 
 	epc = s32gen1_pcie_ep->pcie.ep.epc;
@@ -417,15 +486,19 @@ int s32_pcie_setup_outbound(struct s32_outbound_region *ptrOutb)
 }
 EXPORT_SYMBOL(s32_pcie_setup_outbound);
 
-/* Only for EP. Currently only one EP supported. */
 int s32_pcie_setup_inbound(struct s32_inbound_region *ptrInb)
 {
 	int ret = 0;
 	struct pci_epc *epc;
 	int bar_num;
+#ifdef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
+	int idx;
+#else
 	struct pci_epf_bar bar = {
-		.size = PCIE_EP_DEFAULT_BAR_SIZE
+		.size = PCIE_EP_DEFAULT_BAR_SIZE,
+		.flags = PCIE_EP_BAR_DEFAULT_INIT_FLAGS,
 	};
+#endif
 	struct s32gen1_pcie *s32gen1_pcie_ep;
 
 	if (!ptrInb) {
@@ -433,13 +506,22 @@ int s32_pcie_setup_inbound(struct s32_inbound_region *ptrInb)
 		return -EINVAL;
 	}
 
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
 	s32gen1_pcie_ep = s32_get_dw_pcie(ptrInb->pcie_id);
-
 	if (IS_ERR(s32gen1_pcie_ep)) {
 		pr_err("%s: No S32Gen1 EP configuration found for PCIe%d\n",
 			__func__, ptrInb->pcie_id);
 		return -ENODEV;
 	}
+#else
+	s32gen1_pcie_ep = s32_get_dw_pcie(0);
+	if (IS_ERR(s32gen1_pcie_ep)) {
+		pr_err("%s: No S32Gen1 EP configuration found\n",
+			__func__);
+		return -ENODEV;
+	}
+#endif
+
 	dev_dbg(s32gen1_pcie_ep->pcie.dev, "%s\n", __func__);
 
 	epc = s32gen1_pcie_ep->pcie.ep.epc;
@@ -452,15 +534,44 @@ int s32_pcie_setup_inbound(struct s32_inbound_region *ptrInb)
 
 	/* Setup inbound region */
 	bar_num = ptrInb->bar_nr;
-	if (bar_num >= BAR_5) {
+        if (bar_num < BAR_0 || bar_num >= BAR_5) {
 		dev_err(s32gen1_pcie_ep->pcie.dev,
 			"Invalid BAR number (%d)\n", bar_num);
 		return -EINVAL;
 	}
 
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
 	bar.barno = bar_num;
 	bar.phys_addr = ptrInb->target_addr;
 	ret = epc->ops->set_bar(epc, 0, 0, &bar);
+#else
+
+        s32gen1_ep_bars[bar_num].phys_addr = ptrInb->target_addr;
+        if (!s32gen1_ep_bars[bar_num].size)
+                s32gen1_ep_bars[bar_num].size = PCIE_EP_DEFAULT_BAR_SIZE;
+
+        /* Setup BARs and inbound regions, up to BAR4 inclusivelly */
+        for (idx = bar_num; (idx < BAR_5); idx++) {
+                if (s32gen1_ep_bars[idx].size) {
+                        ret = epc->ops->set_bar(epc, 0,
+                                        &s32gen1_ep_bars[idx]);
+                        if (idx + 1 <= BAR_5) {
+                                dma_addr_t      next_phys_addr =
+                                        s32gen1_ep_bars[idx].phys_addr +
+                                        s32gen1_ep_bars[idx].size;
+
+                                /* shift following BARs if address spaces interfere */
+                                if (next_phys_addr > s32gen1_ep_bars[idx + 1].phys_addr)
+                                        s32gen1_ep_bars[idx + 1].phys_addr = next_phys_addr;
+                        }
+                        if (ret) {
+                                dev_err(s32gen1_pcie_ep->pcie.dev,
+                                                "%s: Unable to init BAR%d\n",
+                                                __func__, idx);
+                        }
+                }
+        }
+#endif
 
 	return ret;
 }
@@ -1000,8 +1111,8 @@ static int s32gen1_pcie_ep_raise_irq(struct dw_pcie_ep *ep, u8 func_no,
 
 static const struct pci_epc_features s32gen1_pcie_epc_features = {
 	.linkup_notifier = false,
-	.msi_capable = true,
-	.msix_capable = false,
+	.msi_capable = false,
+	.msix_capable = true,
 	.reserved_bar = BIT(BAR_1) | BIT(BAR_5),
 	.bar_fixed_64bit = BIT(BAR_0),
 	.bar_fixed_size[0] = SZ_1M,
@@ -1020,7 +1131,19 @@ static struct dw_pcie_ep_ops s32gen1_pcie_ep_ops = {
 	.ep_init = s32gen1_pcie_ep_init,
 	.raise_irq = s32gen1_pcie_ep_raise_irq,
 	.get_features = s32gen1_pcie_ep_get_features,
+#if (defined(CONFIG_PCI_DW_DMA) && defined(CONFIG_PCI_EPF_TEST))
+	.start_dma = dw_pcie_ep_start_dma,
+#endif
 };
+
+int s32_send_msi(struct dw_pcie *pcie)
+{
+	/* Trigger the first MSI, since all MSIs are routed through the same
+	 * physical interrupt anyway
+	 */
+	return s32gen1_pcie_ep_raise_irq(&pcie->ep, 1,
+		PCI_EPC_IRQ_MSI, 1);
+}
 
 static int __init s32gen1_add_pcie_ep(struct s32gen1_pcie *s32_pp)
 {
@@ -1078,8 +1201,11 @@ static int s32gen1_pcie_dt_init(struct platform_device *pdev,
 	const struct s32gen1_pcie_data *data;
 	enum dw_pcie_device_mode mode;
 	struct dw_pcie_ep *ep = &pcie->ep;
-	u32 pcie_vendor_id, pcie_variant_bits = 0;
+	u32 pcie_vendor_id = PCI_VENDOR_ID_FREESCALE, pcie_variant_bits = 0;
 	int ret;
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
+	struct device_node *shmn;
+#endif
 
 	match = of_match_device(s32gen1_pcie_of_match, dev);
 	if (!match)
@@ -1118,34 +1244,67 @@ static int s32gen1_pcie_dt_init(struct platform_device *pdev,
 	if (IS_ERR(pcie->dbi_base))
 		return PTR_ERR(pcie->dbi_base);
 	dev_dbg(dev, "dbi: %pR\n", res);
-	dev_dbg(dev, "dbi virt: 0x%p\n", pcie->dbi_base);
+	dev_dbg(dev, "dbi virt: 0x" PTR_FMT "\n", pcie->dbi_base);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi2");
 	pcie->dbi_base2 = devm_ioremap_resource(dev, res);
 	if (IS_ERR(pcie->dbi_base2))
 		return PTR_ERR(pcie->dbi_base2);
 	dev_dbg(dev, "dbi2: %pR\n", res);
-	dev_dbg(dev, "dbi2 virt: 0x%p\n", pcie->dbi_base2);
+	dev_dbg(dev, "dbi2 virt: 0x" PTR_FMT "\n", pcie->dbi_base2);
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "atu");
 	dev_dbg(dev, "atu: %pR\n", res);
 	pcie->atu_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(pcie->atu_base))
 		return PTR_ERR(pcie->atu_base);
-	dev_dbg(dev, "atu virt: 0x%p\n", pcie->atu_base);
+	dev_dbg(dev, "atu virt: 0x" PTR_FMT "\n", pcie->atu_base);
+
+#ifdef CONFIG_PCI_DW_DMA
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dma");
+	dev_dbg(dev, "dma: %pR\n", res);
+	s32_pp->dma.dma_base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(s32_pp->dma.dma_base))
+		return PTR_ERR(s32_pp->dma.dma_base);
+	dev_dbg(dev, "dma virt: 0x" PTR_FMT "\n", s32_pp->dma.dma_base);
+	s32_pp->dma.iatu_unroll_enabled = dw_pcie_iatu_unroll_enabled(pcie);
+#if defined(CONFIG_PCI_S32_DEBUG_WRITES)
+	s32_pp->dma.write_dma = s32gen1_pcie_write_dma;
+#endif
+#endif
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ctrl");
 	s32_pp->ctrl_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(s32_pp->ctrl_base))
 		return PTR_ERR(s32_pp->ctrl_base);
 	dev_dbg(dev, "ctrl: %pR\n", res);
-	dev_dbg(dev, "ctrl virt: 0x%p\n", s32_pp->ctrl_base);
+	dev_dbg(dev, "ctrl virt: 0x" PTR_FMT "\n", s32_pp->ctrl_base);
 
-	s32_pp->linkspeed = of_pci_get_max_link_speed(np);
+	s32_pp->linkspeed = (enum pcie_link_speed)of_pci_get_max_link_speed(np);
 	if (s32_pp->linkspeed < GEN1 || s32_pp->linkspeed > GEN3) {
 		dev_warn(dev, "Invalid PCIe speed; setting to GEN1\n");
 		s32_pp->linkspeed = GEN1;
 	}
+
+#ifndef CONFIG_PCI_S32GEN1_IOCTL_LIMIT_ONE_ENDPOINT
+	/* Reserved memory */
+	/* Get pointer to shared mem region device node from "memory-region" phandle.
+	 * Don't throw errors if not available, just warn and go on without.
+	 */
+	shmn = of_parse_phandle(np, "shared-mem", 0);
+	if (shmn) {
+		/* Convert memory region to a struct resource */
+		ret = of_address_to_resource(shmn, 0, &s32_pp->shared_mem);
+		of_node_put(shmn);
+		if (ret) {
+			dev_warn(dev, "Failed to translate shared-mem to a resource\n");
+			s32_pp->shared_mem.start = 0;
+			s32_pp->shared_mem.end = 0;
+		}
+	} else {
+		dev_warn(dev, "No shared-mem node\n");
+	}
+#endif
 
 	/* This is for EP only */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "addr_space");
@@ -1164,15 +1323,21 @@ static int s32gen1_pcie_dt_init(struct platform_device *pdev,
 	if (!s32_pp->is_endpoint && of_parse_phandle(np, "msi-parent", 0))
 		s32_pp->has_msi_parent = true;
 
-	ret = s32_siul2_nvmem_get_pcie_dev_id(dev, "pcie_variant",
+	ret = of_property_read_u32(np, "pcie_device_id", &pcie_variant_bits);
+	if (ret) {
+		ret = s32_siul2_nvmem_get_pcie_dev_id(dev, "pcie_variant_bits",
 					      &pcie_variant_bits);
-	if (ret)
-		return ret;
+		if (ret || !pcie_variant_bits) {
+			dev_info(dev, "Error reading SIUL2 Device ID\n");
+			return ret;
+		}
+	}
 
 	dw_pcie_dbi_ro_wr_en(pcie);
-	pcie_vendor_id = dw_pcie_readl_dbi(pcie, PCI_VENDOR_ID);
 	pcie_vendor_id |= pcie_variant_bits << PCI_DEVICE_ID_SHIFT;
-	dev_info(dev, "Setting PCI Device ID to: 0x%x\n", pcie_vendor_id >> 16);
+	dev_info(dev, "Setting PCI Device and Vendor IDs to 0x%x:0x%x\n",
+		     (u32)(pcie_vendor_id >> PCI_DEVICE_ID_SHIFT),
+		     (u32)(pcie_vendor_id & GENMASK(15, 0)));
 	dw_pcie_writel_dbi(pcie, PCI_VENDOR_ID, pcie_vendor_id);
 	dw_pcie_dbi_ro_wr_dis(pcie);
 
@@ -1450,24 +1615,16 @@ static int deinit_controller(struct s32gen1_pcie *s32_pp)
 	return deinit_pcie_phy(s32_pp);
 }
 
-static bool pcie_link_or_timeout(struct s32gen1_pcie *s32_pp, ktime_t timeout)
-{
-	ktime_t cur = ktime_get();
-
-	return has_data_phy_link(s32_pp) || ktime_after(cur, timeout);
-}
-
 static int wait_phy_data_link(struct s32gen1_pcie *s32_pp)
 {
-	ktime_t timeout = ktime_add_ms(ktime_get(), PCIE_LINK_TIMEOUT_MS);
+	bool has_link;
+	int ret = read_poll_timeout(has_data_phy_link, has_link, has_link,
+			PCIE_LINK_WAIT_US, PCIE_LINK_TIMEOUT_US, 0, s32_pp);
 
-	spin_until_cond(pcie_link_or_timeout(s32_pp, timeout));
-	if (!has_data_phy_link(s32_pp)) {
+	if (ret)
 		dev_info(s32_pp->pcie.dev, "Failed to stabilize PHY link\n");
-		return -ETIMEDOUT;
-	}
 
-	return 0;
+	return ret;
 }
 
 static void s32gen1_pcie_downstream_dev_to_D0(struct s32gen1_pcie *s32_pp)
@@ -1647,31 +1804,23 @@ static int s32gen1_pcie_config_common(struct s32gen1_pcie *s32_pp,
 			goto fail_host_init;
 
 	} else {
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-		struct dentry *pfile;
-#endif
-
 		s32_pp->call_back = NULL;
 
-#ifdef CONFIG_PCI_S32GEN1_ACCESS_FROM_USER
-		s32_pp->uspace.user_pid = 0;
-		memset(&s32_pp->uspace.info, 0, sizeof(struct siginfo));
-		s32_pp->uspace.info.si_signo = SIGUSR1;
-		s32_pp->uspace.info.si_code = SI_USER;
-		s32_pp->uspace.info.si_int = 0;
-
-		s32_pp->dir = debugfs_create_dir("ep_dbgfs", NULL);
-		if (!s32_pp->dir)
-			dev_info(dev, "Creating debugfs dir failed\n");
-		pfile = debugfs_create_file("ep_file", 0444, s32_pp->dir,
-			(void *)s32_pp, &s32gen1_pcie_ep_dbgfs_fops);
-		if (!pfile)
-			dev_info(dev, "Creating debugfs failed\n");
-#endif /* CONFIG_PCI_S32GEN1_ACCESS_FROM_USER */
+#ifdef CONFIG_PCI_DW_DMA
+		ret = s32gen1_pcie_config_irq(&s32_pp->dma_irq,
+				"dma", pdev,
+				s32gen1_pcie_dma_handler, s32_pp);
+		if (ret) {
+			dev_err(dev, "failed to request dma irq\n");
+			goto fail_host_init;
+		}
+		dw_pcie_dma_clear_regs(&s32_pp->dma);
+#endif /* CONFIG_PCI_DW_DMA */
 
 		ret = s32gen1_add_pcie_ep(s32_pp);
 		if (ret)
 			goto fail_host_init;
+		s32_config_user_space_data(&s32_pp->uinfo, pcie);
 	}
 
 	if (!s32_pp->is_endpoint) {
@@ -1746,17 +1895,6 @@ static int s32gen1_pcie_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to set common PCIe settings\n");
 		goto err;
 	}
-
-#ifdef CONFIG_PCI_DW_DMA
-		ret = s32gen1_pcie_config_irq(&s32_pp->dma_irq,
-				"dma", pdev,
-				s32gen1_pcie_dma_handler, s32_pp);
-		if (ret) {
-			dev_err(dev, "failed to request dma irq\n");
-			goto err;
-		}
-		dw_pcie_dma_clear_regs(pcie, &s32_pp->dma);
-#endif /* CONFIG_PCI_DW_DMA */
 
 err:
 	if (ret) {
@@ -1873,8 +2011,8 @@ static const struct s32gen1_pcie_data ep_of_data = {
 };
 
 static const struct of_device_id s32gen1_pcie_of_match[] = {
-	{ .compatible = "fsl,s32gen1-pcie", .data = &rc_of_data },
-	{ .compatible = "fsl,s32gen1-pcie-ep", .data = &ep_of_data },
+	{ .compatible = "nxp,s32cc-pcie", .data = &rc_of_data },
+	{ .compatible = "nxp,s32cc-pcie-ep", .data = &ep_of_data },
 	{},
 };
 MODULE_DEVICE_TABLE(of, s32gen1_pcie_of_match);

@@ -29,10 +29,9 @@
 #define CNTL_CLEAR_MASK		0xFFFFFFFD
 #define CNTL_OVER_MASK		0xFFFFFFFE
 
-#define CNTL_CSV_SHIFT		24
-#define CNTL_CSV_MASK		(0xFF << CNTL_CSV_SHIFT)
+#define CNTL_CSV_MASK		GENMASK(31, 24)
+#define CNTL_CP_MASK		GENMASK(23, 16)
 
-#define EVENT_CYCLES_ID		0
 #define EVENT_CYCLES_COUNTER	0
 #define NUM_COUNTERS		4
 
@@ -46,6 +45,37 @@
 #define DDR_CPUHP_CB_NAME	DDR_PERF_DEV_NAME "_perf_pmu"
 
 static DEFINE_IDA(ddr_ida);
+
+enum ddr_perf_event_id {
+	CYCLES_EVT =			0x0,
+	SELF_REFRESH_EVT =		0x1,
+	WRITE_ACCESSES_EVT =		0x5,
+	WRITE_QUEUE_DEPTH_EVT =		0x9,
+	LP_READ_CREDIT_CNT_EVT =	0x10,
+	HP_READ_CREDIT_CNT_EVT =	0x11,
+	WRITE_CREDIT_CNT_EVT =		0x12,
+	READ_COMMAND_EVT =		0x20,
+	WRITE_COMMAND_EVT =		0x21,
+	READ_MODIFY_WRITE_COMMAND_EVT = 0x22,
+	HP_READ_COMMAND_EVT =		0x23,
+	HP_READ_REQ_NOCREDIT_EVT =	0x24,
+	HP_READ_XACT_CREDIT_EVT =	0x25,
+	LP_READ_REQ_NOCREDIT_EVT =	0x26,
+	LP_READ_XACT_CREDIT_EVT =	0x27,
+	WRITE_XACT_CREDIT_EVT =		0x29,
+	READ_CYCLES_EVT =		0x2a,
+	WRITE_CYCLES_EVT =		0x2b,
+	READ_WRITE_TRANSITION_EVT =	0x30,
+	PRECHARGE_EVT =			0x31,
+	ACTIVATE_EVT =			0x32,
+	LOAD_MODE_EVT =			0x33,
+	MASKED_WRITE_EVT =		0x34,
+	READ_EVT =			0x35,
+	READ_ACTIVATE_EVT =		0x36,
+	REFRESH_EVT =			0x37,
+	WRITE_EVT =			0x38,
+	RAW_HAZARD_EVT =		0x39
+};
 
 struct ddr_pmu {
 	struct pmu pmu;
@@ -98,38 +128,36 @@ ddr_pmu_event_show(struct device *dev, struct device_attribute *attr,
 	})[0].attr.attr)
 
 static struct attribute *ddr_perf_events_attrs[] = {
-	S32_DDR_PMU_EVENT_ATTR(cycles, EVENT_CYCLES_ID),
-	S32_DDR_PMU_EVENT_ATTR(selfresh, 0x01),
-	S32_DDR_PMU_EVENT_ATTR(read-accesses, 0x04),
-	S32_DDR_PMU_EVENT_ATTR(write-accesses, 0x05),
-	S32_DDR_PMU_EVENT_ATTR(read-queue-depth, 0x08),
-	S32_DDR_PMU_EVENT_ATTR(write-queue-depth, 0x09),
-	S32_DDR_PMU_EVENT_ATTR(lp-read-credit-cnt, 0x10),
-	S32_DDR_PMU_EVENT_ATTR(hp-read-credit-cnt, 0x11),
-	S32_DDR_PMU_EVENT_ATTR(write-credit-cnt, 0x12),
-	S32_DDR_PMU_EVENT_ATTR(read-command, 0x20),
-	S32_DDR_PMU_EVENT_ATTR(write-command, 0x21),
-	S32_DDR_PMU_EVENT_ATTR(read-modify-write-command, 0x22),
-	S32_DDR_PMU_EVENT_ATTR(hp-read, 0x23),
-	S32_DDR_PMU_EVENT_ATTR(hp-req-nocredit, 0x24),
-	S32_DDR_PMU_EVENT_ATTR(hp-xact-credit, 0x25),
-	S32_DDR_PMU_EVENT_ATTR(lp-req-nocredit, 0x26),
-	S32_DDR_PMU_EVENT_ATTR(lp-xact-credit, 0x27),
-	S32_DDR_PMU_EVENT_ATTR(wr-xact-credit, 0x29),
-	S32_DDR_PMU_EVENT_ATTR(read-cycles, 0x2a),
-	S32_DDR_PMU_EVENT_ATTR(write-cycles, 0x2b),
-	S32_DDR_PMU_EVENT_ATTR(read-write-transition, 0x30),
-	S32_DDR_PMU_EVENT_ATTR(precharge, 0x31),
-	S32_DDR_PMU_EVENT_ATTR(activate, 0x32),
-	S32_DDR_PMU_EVENT_ATTR(load-mode, 0x33),
-	S32_DDR_PMU_EVENT_ATTR(perf-mwr, 0x34),
-	S32_DDR_PMU_EVENT_ATTR(read, 0x35),
-	S32_DDR_PMU_EVENT_ATTR(read-activate, 0x36),
-	S32_DDR_PMU_EVENT_ATTR(refresh, 0x37),
-	S32_DDR_PMU_EVENT_ATTR(write, 0x38),
-	S32_DDR_PMU_EVENT_ATTR(raw-hazard, 0x39),
-	S32_DDR_PMU_EVENT_ATTR(axid-read, 0x41),
-	S32_DDR_PMU_EVENT_ATTR(axid-write, 0x42),
+	S32_DDR_PMU_EVENT_ATTR(cycles, CYCLES_EVT),
+	S32_DDR_PMU_EVENT_ATTR(self-refresh, SELF_REFRESH_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write-accesses, WRITE_ACCESSES_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write-queue-depth, WRITE_QUEUE_DEPTH_EVT),
+	S32_DDR_PMU_EVENT_ATTR(lp-read-credit-cnt, LP_READ_CREDIT_CNT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(hp-read-credit-cnt, HP_READ_CREDIT_CNT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write-credit-cnt, WRITE_CREDIT_CNT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read-command, READ_COMMAND_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write-command, WRITE_COMMAND_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read-modify-write-command,
+			       READ_MODIFY_WRITE_COMMAND_EVT),
+	S32_DDR_PMU_EVENT_ATTR(hp-read, HP_READ_COMMAND_EVT),
+	S32_DDR_PMU_EVENT_ATTR(hp-req-nocredit, HP_READ_REQ_NOCREDIT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(hp-xact-credit, HP_READ_XACT_CREDIT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(lp-req-nocredit, LP_READ_REQ_NOCREDIT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(lp-xact-credit, LP_READ_XACT_CREDIT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(wr-xact-credit, WRITE_XACT_CREDIT_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read-cycles, READ_CYCLES_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write-cycles, WRITE_CYCLES_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read-write-transition,
+			       READ_WRITE_TRANSITION_EVT),
+	S32_DDR_PMU_EVENT_ATTR(precharge, PRECHARGE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(activate, ACTIVATE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(load-mode, LOAD_MODE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(perf-mwr, MASKED_WRITE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read, READ_EVT),
+	S32_DDR_PMU_EVENT_ATTR(read-activate, READ_ACTIVATE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(refresh, REFRESH_EVT),
+	S32_DDR_PMU_EVENT_ATTR(write, WRITE_EVT),
+	S32_DDR_PMU_EVENT_ATTR(raw-hazard, RAW_HAZARD_EVT),
 	NULL,
 };
 
@@ -139,13 +167,11 @@ static struct attribute_group ddr_perf_events_attr_group = {
 };
 
 PMU_FORMAT_ATTR(event, "config:0-7");
-PMU_FORMAT_ATTR(axi_id, "config1:0-15");
-PMU_FORMAT_ATTR(axi_mask, "config1:16-31");
+PMU_FORMAT_ATTR(counter_cp, "config:8-15");
 
 static struct attribute *ddr_perf_format_attrs[] = {
 	&format_attr_event.attr,
-	&format_attr_axi_id.attr,
-	&format_attr_axi_mask.attr,
+	&format_attr_counter_cp.attr,
 	NULL,
 };
 
@@ -161,7 +187,7 @@ static const struct attribute_group *attr_groups[] = {
 	NULL,
 };
 
-static u32 ddr_perf_alloc_counter(struct ddr_pmu *pmu, int event)
+static u32 ddr_perf_alloc_counter(struct ddr_pmu *pmu, unsigned int event)
 {
 	int i;
 
@@ -170,7 +196,7 @@ static u32 ddr_perf_alloc_counter(struct ddr_pmu *pmu, int event)
 	 * Cycles counter is dedicated for cycle event
 	 * can't be used for the other events
 	 */
-	if (event == EVENT_CYCLES_ID) {
+	if (event == CYCLES_EVT) {
 		if (!pmu->events[EVENT_CYCLES_COUNTER])
 			return EVENT_CYCLES_COUNTER;
 		else
@@ -237,7 +263,7 @@ static int ddr_perf_event_init(struct perf_event *event)
 static void ddr_perf_counter_clear(struct ddr_pmu *pmu, int counter)
 {
 	u8 reg = counter * 4 + COUNTER_CNTL;
-	int val;
+	unsigned int val;
 
 	if (counter >= NUM_COUNTERS)
 		return;
@@ -256,7 +282,7 @@ static void ddr_perf_counter_clear(struct ddr_pmu *pmu, int counter)
 static bool ddr_perf_counter_disabled(struct ddr_pmu *pmu, int counter)
 {
 	u8 reg = counter * 4 + COUNTER_CNTL;
-	int val, is_enabled, is_cleared, is_csv_set;
+	unsigned int val, is_enabled, is_cleared, is_csv_set;
 
 	val = ioread32(pmu->base + reg);
 	is_enabled = val & CNTL_EN;
@@ -279,11 +305,42 @@ static void ddr_perf_counter_stop(struct ddr_pmu *pmu, int counter)
 	iowrite32(val, pmu->base + reg);
 }
 
-static void ddr_perf_counter_enable(struct ddr_pmu *pmu, int config,
+static unsigned int ddr_perf_counter_cp_mask_by_event(unsigned int config)
+{
+	unsigned int event_id, counter_cp, event_mask;
+
+	/* Bits [7:0] of the "config" attribute */
+	event_id = config & 0xFF;
+	/* Bits [15:8] of the "config" attribute */
+	counter_cp = (config >> 8) & 0xFF;
+
+	switch (event_id) {
+	case SELF_REFRESH_EVT:
+		event_mask = GENMASK(1, 0);
+		break;
+	case WRITE_QUEUE_DEPTH_EVT:
+		event_mask = GENMASK(3, 0);
+		break;
+	case LP_READ_CREDIT_CNT_EVT:
+	case HP_READ_CREDIT_CNT_EVT:
+	case WRITE_CREDIT_CNT_EVT:
+		event_mask = GENMASK(6, 0);
+		break;
+	default:
+		event_mask = 0;
+		break;
+	}
+
+	return counter_cp & event_mask;
+}
+
+static void ddr_perf_counter_enable(struct ddr_pmu *pmu, unsigned int config,
 				    int counter, bool enable)
 {
 	u8 reg = counter * 4 + COUNTER_CNTL;
-	int val;
+	unsigned int val, counter_cp;
+
+	counter_cp = ddr_perf_counter_cp_mask_by_event(config);
 
 	if (enable) {
 		/*
@@ -294,6 +351,7 @@ static void ddr_perf_counter_enable(struct ddr_pmu *pmu, int config,
 		iowrite32(0, pmu->base + reg);
 		val = CNTL_EN | CNTL_CLEAR;
 		val |= FIELD_PREP(CNTL_CSV_MASK, config);
+		val |= FIELD_PREP(CNTL_CP_MASK, counter_cp);
 		iowrite32(val, pmu->base + reg);
 	} else {
 		/* Disable counter without resetting it */
@@ -339,7 +397,7 @@ static int ddr_perf_event_add(struct perf_event *event, int flags)
 	struct ddr_pmu *pmu = to_ddr_pmu(event->pmu);
 	struct hw_perf_event *hwc = &event->hw;
 	int counter;
-	int cfg = event->attr.config;
+	unsigned int cfg = event->attr.config;
 
 	counter = ddr_perf_alloc_counter(pmu, cfg);
 	if (counter < 0) {
@@ -390,7 +448,7 @@ static void ddr_perf_pmu_enable(struct pmu *pmu)
 
 	/* enable cycle counter if cycle is not active event list */
 	if (!ddr_pmu->events[EVENT_CYCLES_COUNTER])
-		ddr_perf_counter_enable(ddr_pmu, EVENT_CYCLES_ID,
+		ddr_perf_counter_enable(ddr_pmu, CYCLES_EVT,
 					EVENT_CYCLES_COUNTER, true);
 }
 
@@ -399,7 +457,7 @@ static void ddr_perf_pmu_disable(struct pmu *pmu)
 	struct ddr_pmu *ddr_pmu = to_ddr_pmu(pmu);
 
 	if (!ddr_pmu->events[EVENT_CYCLES_COUNTER])
-		ddr_perf_counter_enable(ddr_pmu, EVENT_CYCLES_ID,
+		ddr_perf_counter_enable(ddr_pmu, CYCLES_EVT,
 					EVENT_CYCLES_COUNTER, false);
 }
 
@@ -441,7 +499,7 @@ static irqreturn_t ddr_perf_irq_handler(int irq, void *p)
 		return IRQ_NONE;
 
 	/* all counter will stop if cycle counter disabled */
-	ddr_perf_counter_enable(pmu, EVENT_CYCLES_ID, EVENT_CYCLES_COUNTER,
+	ddr_perf_counter_enable(pmu, CYCLES_EVT, EVENT_CYCLES_COUNTER,
 				false);
 	/*
 	 * When the cycle counter overflows, all counters are stopped,
@@ -471,7 +529,7 @@ static irqreturn_t ddr_perf_irq_handler(int irq, void *p)
 		ddr_perf_event_update(event);
 	}
 
-	ddr_perf_counter_enable(pmu, EVENT_CYCLES_ID, EVENT_CYCLES_COUNTER,
+	ddr_perf_counter_enable(pmu, CYCLES_EVT, EVENT_CYCLES_COUNTER,
 				true);
 
 	return IRQ_HANDLED;
@@ -613,7 +671,7 @@ static int ddr_perf_remove(struct platform_device *pdev)
 
 static const struct of_device_id s32_ddr_perf_dt_ids[] = {
 	{
-		.compatible = "fsl,s32gen1-ddr-perf",
+		.compatible = "nxp,s32cc-ddr-perf",
 	}, {}
 };
 MODULE_DEVICE_TABLE(of, s32_ddr_perf_dt_ids);
