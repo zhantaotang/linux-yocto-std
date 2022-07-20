@@ -336,7 +336,7 @@
 		};
 
 		mscm0: mscm@40198000 {
-			compatible = "fsl,s32gen1-mscm";
+			compatible = "fsl,s32cc-mscm";
 
 			reg = <0x0 0x40198000 0x0 0x1000>;
 
