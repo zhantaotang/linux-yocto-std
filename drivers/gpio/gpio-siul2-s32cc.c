@@ -153,7 +153,7 @@ struct siul2_gpio_dev {
 	struct regmap *eirqimcrsmap;
 	struct gpio_chip gc;
 	struct irq_chip irq;
-	spinlock_t lock;
+	raw_spinlock_t lock;
 };
 
 /* We will use the following variable names:
@@ -206,14 +206,14 @@ static inline void gpio_set_direction(struct siul2_gpio_dev *dev, int gpio,
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&dev->lock, flags);
+	raw_spin_lock_irqsave(&dev->lock, flags);
 
 	if (dir == IN)
 		bitmap_clear(dev->pin_dir_bitmap, gpio, 1);
 	else
 		bitmap_set(dev->pin_dir_bitmap, gpio, 1);
 
-	spin_unlock_irqrestore(&dev->lock, flags);
+	raw_spin_unlock_irqrestore(&dev->lock, flags);
 }
 
 static inline enum gpio_dir gpio_get_direction(struct siul2_gpio_dev *dev,
@@ -476,9 +476,9 @@ static void siul2_gpio_irq_unmask(struct irq_data *data)
 	/* Enable Interrupt */
 	regmap_update_bits(gpio_dev->irqmap, SIUL2_DIRER0, mask, mask);
 
-	spin_lock_irqsave(&gpio_dev->lock, flags);
+	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
 	bitmap_set(&gpio_dev->eirqs_bitmap, platdata->irqs[index].eirq, 1);
-	spin_unlock_irqrestore(&gpio_dev->lock, flags);
+	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 
 	/* Set IMCR */
 	regmap_write(gpio_dev->eirqimcrsmap,
@@ -520,9 +520,9 @@ static void siul2_gpio_irq_mask(struct irq_data *data)
 	/* Clean status flag */
 	regmap_update_bits(gpio_dev->irqmap, SIUL2_DISR0, mask, mask);
 
-	spin_lock_irqsave(&gpio_dev->lock, flags);
+	raw_spin_lock_irqsave(&gpio_dev->lock, flags);
 	bitmap_clear(&gpio_dev->eirqs_bitmap, platdata->irqs[index].eirq, 1);
-	spin_unlock_irqrestore(&gpio_dev->lock, flags);
+	raw_spin_unlock_irqrestore(&gpio_dev->lock, flags);
 
 	regmap_write(gpio_dev->eirqimcrsmap,
 		     SIUL2_EIRQ_REG(platdata->irqs[index].eirq),
@@ -1092,7 +1092,7 @@ static int siul2_gpio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, gpio_dev);
 
-	spin_lock_init(&gpio_dev->lock);
+	raw_spin_lock_init(&gpio_dev->lock);
 
 	for (i = 0; i < ARRAY_SIZE(gpio_dev->siul2); ++i) {
 		err = siul2_get_gpio_pinspec(pdev, &pinspec, i);
