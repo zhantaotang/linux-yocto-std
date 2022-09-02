@@ -28,6 +28,7 @@
 		 * for eth fixup: addr changed to 0x8
 		 */
 		reg = <3>;
+		status="disabled";
 	};
 };
 
