@@ -13,7 +13,6 @@
 #include <linux/crypto.h>
 #include <crypto/hash.h>
 #include <crypto/internal/hash.h>
-#include <crypto/md5.h>
 #include <crypto/sha1.h>
 #include <crypto/sha2.h>
 #include <crypto/scatterwalk.h>
@@ -85,15 +84,15 @@ struct hse_ahash_tfm_ctx {
 /**
  * struct hse_ahash_state - crypto request state
  * @sctx: streaming mode hardware state context
- * @streaming_mode: request in HSE streaming mode
  * @cache: block-sized cache for small input fragments
  * @cache_idx: current written byte index in the cache
+ * @streaming_mode: request in HSE streaming mode
  */
 struct hse_ahash_state {
 	u8 sctx[HSE_MAX_CTX_SIZE];
-	bool streaming_mode;
 	u8 cache[HSE_AHASH_MAX_BLOCK_SIZE];
 	u8 cache_idx;
+	bool streaming_mode;
 };
 
 /**
@@ -227,35 +226,15 @@ static int hse_ahash_init(struct ahash_request *req)
 	struct hse_ahash_req_ctx *rctx = ahash_request_ctx(req);
 	struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 	struct hse_ahash_alg *alg = hse_ahash_get_alg(tfm);
-	unsigned int blocksize = crypto_ahash_blocksize(tfm);
-	int err;
+	int err = 0;
 
-	rctx->buf = kzalloc(blocksize, GFP_KERNEL);
-	if (IS_ERR_OR_NULL(rctx->buf))
-		return -ENOMEM;
-
-	rctx->buf_dma = dma_map_single(alg->dev, rctx->buf, blocksize,
-				       DMA_TO_DEVICE);
-	if (unlikely(dma_mapping_error(alg->dev, rctx->buf_dma))) {
-		err = -ENOMEM;
-		goto err_free_buf;
-	}
-
-	rctx->buflen = blocksize;
+	rctx->buflen = 0;
 	rctx->cache_idx = 0;
 	rctx->streaming_mode = false;
 
 	err = hse_channel_acquire(alg->dev, HSE_CH_TYPE_STREAM, &rctx->channel,
 				  &rctx->stream);
-	if (err)
-		goto err_unmap_buf;
 
-	return 0;
-err_unmap_buf:
-	dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen, DMA_TO_DEVICE);
-err_free_buf:
-	kfree(rctx->buf);
-	rctx->buflen = 0;
 	return err;
 }
 
@@ -288,30 +267,27 @@ static int hse_ahash_update(struct ahash_request *req)
 	full_blocks = rounddown(bytes_left, blocksize);
 
 	if (rctx->buflen < full_blocks) {
-		void *newbuf;
-		dma_addr_t newbuf_dma;
+		if (rctx->buflen) {
+			dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
+					 DMA_TO_DEVICE);
+			kfree(rctx->buf);
+		}
+		rctx->buflen = 0;
 
 		/* realloc larger dynamic buffer */
-		newbuf = kzalloc(full_blocks, GFP_KERNEL);
-		if (IS_ERR_OR_NULL(newbuf)) {
+		rctx->buf = kzalloc(full_blocks, GFP_KERNEL);
+		if (IS_ERR_OR_NULL(rctx->buf)) {
 			err = -ENOMEM;
 			goto err_release_channel;
 		}
 
-		newbuf_dma = dma_map_single(alg->dev, newbuf, full_blocks,
-					    DMA_TO_DEVICE);
-		if (unlikely(dma_mapping_error(alg->dev, newbuf_dma))) {
-			kfree(newbuf);
+		rctx->buf_dma = dma_map_single(alg->dev, rctx->buf, full_blocks,
+					       DMA_TO_DEVICE);
+		if (unlikely(dma_mapping_error(alg->dev, rctx->buf_dma))) {
 			err = -ENOMEM;
 			goto err_release_channel;
 		}
 
-		dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
-				 DMA_TO_DEVICE);
-		kfree(rctx->buf);
-
-		rctx->buf = newbuf;
-		rctx->buf_dma = newbuf_dma;
 		rctx->buflen = full_blocks;
 	}
 
@@ -365,8 +341,11 @@ static int hse_ahash_update(struct ahash_request *req)
 	return -EINPROGRESS;
 err_release_channel:
 	hse_channel_release(alg->dev, rctx->channel);
-	dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen, DMA_TO_DEVICE);
-	kfree(rctx->buf);
+	if (rctx->buflen) {
+		dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
+				 DMA_TO_DEVICE);
+		kfree(rctx->buf);
+	}
 	rctx->buflen = 0;
 	return err;
 }
@@ -381,6 +360,7 @@ static int hse_ahash_final(struct ahash_request *req)
 	struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 	struct hse_ahash_tfm_ctx *tctx = crypto_ahash_ctx(tfm);
 	struct hse_ahash_alg *alg = hse_ahash_get_alg(tfm);
+	size_t blocksize = crypto_ahash_blocksize(tfm);
 	int err;
 
 	rctx->outlen = crypto_ahash_digestsize(tfm);
@@ -397,11 +377,30 @@ static int hse_ahash_final(struct ahash_request *req)
 		goto err_unmap_result;
 	}
 
-	/* copy remaining data to buffer */
-	memcpy(rctx->buf, rctx->cache, rctx->cache_idx);
-	/* sync needed as the cores and HSE do not share a coherency domain */
-	dma_sync_single_for_device(alg->dev, rctx->buf_dma, rctx->cache_idx,
-				   DMA_TO_DEVICE);
+	/* alloc dynamic buffer if necessary */
+	if (!rctx->buflen) {
+		rctx->buflen = max_t(size_t, rctx->cache_idx, blocksize);
+		rctx->buf = kzalloc(rctx->buflen, GFP_KERNEL);
+		if (IS_ERR_OR_NULL(rctx->buf)) {
+			err = -ENOMEM;
+			goto err_unmap_outlen;
+		}
+
+		rctx->buf_dma = dma_map_single(alg->dev, rctx->buf,
+					       rctx->buflen, DMA_TO_DEVICE);
+		if (unlikely(dma_mapping_error(alg->dev, rctx->buf_dma))) {
+			err = -ENOMEM;
+			goto err_unmap_outlen;
+		}
+	}
+
+	if (rctx->cache_idx) {
+		/* copy remaining data to buffer */
+		memcpy(rctx->buf, rctx->cache, rctx->cache_idx);
+		/* the cores and HSE do not share a coherency domain */
+		dma_sync_single_for_device(alg->dev, rctx->buf_dma,
+					   rctx->cache_idx, DMA_TO_DEVICE);
+	}
 
 	/* use ONE-PASS access mode if no START request has been issued */
 	if (!rctx->streaming_mode) {
@@ -472,7 +471,7 @@ static int hse_ahash_finup(struct ahash_request *req)
 	struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 	struct hse_ahash_tfm_ctx *tctx = crypto_ahash_ctx(tfm);
 	struct hse_ahash_alg *alg = hse_ahash_get_alg(tfm);
-	unsigned int bytes_left;
+	unsigned int bytes_left, blocksize = crypto_ahash_blocksize(tfm);
 	int err;
 
 	rctx->outlen = crypto_ahash_digestsize(tfm);
@@ -490,32 +489,28 @@ static int hse_ahash_finup(struct ahash_request *req)
 	}
 
 	bytes_left = rctx->cache_idx + req->nbytes;
-	if (rctx->buflen < bytes_left) {
-		void *newbuf;
-		dma_addr_t newbuf_dma;
+	if (rctx->buflen < bytes_left || !rctx->buflen) {
+		if (rctx->buflen) {
+			dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
+					 DMA_TO_DEVICE);
+			kfree(rctx->buf);
+		}
+		rctx->buflen = 0;
 
 		/* realloc larger dynamic buffer */
-		newbuf = kzalloc(bytes_left, GFP_KERNEL);
-		if (IS_ERR_OR_NULL(newbuf)) {
+		rctx->buflen = max(bytes_left, blocksize);
+		rctx->buf = kzalloc(rctx->buflen, GFP_KERNEL);
+		if (IS_ERR_OR_NULL(rctx->buf)) {
 			err = -ENOMEM;
 			goto err_unmap_outlen;
 		}
 
-		newbuf_dma = dma_map_single(alg->dev, newbuf, bytes_left,
-					    DMA_TO_DEVICE);
-		if (unlikely(dma_mapping_error(alg->dev, newbuf_dma))) {
-			kfree(newbuf);
+		rctx->buf_dma = dma_map_single(alg->dev, rctx->buf,
+					       rctx->buflen, DMA_TO_DEVICE);
+		if (unlikely(dma_mapping_error(alg->dev, rctx->buf_dma))) {
 			err = -ENOMEM;
-			goto err_release_channel;
+			goto err_unmap_outlen;
 		}
-
-		dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
-				 DMA_TO_DEVICE);
-		kfree(rctx->buf);
-
-		rctx->buf = newbuf;
-		rctx->buf_dma = newbuf_dma;
-		rctx->buflen = bytes_left;
 	}
 
 	/* copy remaining data to buffer */
@@ -578,8 +573,11 @@ err_unmap_result:
 			 DMA_FROM_DEVICE);
 err_release_channel:
 	hse_channel_release(alg->dev, rctx->channel);
-	dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen, DMA_TO_DEVICE);
-	kfree(rctx->buf);
+	if (rctx->buflen) {
+		dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
+				 DMA_TO_DEVICE);
+		kfree(rctx->buf);
+	}
 	rctx->buflen = 0;
 	return err;
 }
@@ -685,30 +683,39 @@ static int hse_ahash_export(struct ahash_request *req, void *out)
 	struct hse_ahash_req_ctx *rctx = ahash_request_ctx(req);
 	struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 	struct hse_ahash_alg *alg = hse_ahash_get_alg(tfm);
-	struct hse_ahash_state *state = out;
+	struct hse_ahash_state *state;
 	dma_addr_t sctx_dma;
 	int err = 0;
 
-	if (unlikely(!out))
-		return -EINVAL;
+	if (unlikely(!out)) {
+		err = -EINVAL;
+		goto out_release_channel;
+	}
+
+	/* alloc state buffer in DMAable area */
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(state)) {
+		err = -ENOMEM;
+		goto out_release_channel;
+	}
 
 	/* save block-sized cache */
 	memcpy(state->cache, rctx->cache, rctx->cache_idx);
 	state->cache_idx = rctx->cache_idx;
 	state->streaming_mode = rctx->streaming_mode;
 
-	if (!state->streaming_mode)
-		goto out_release_channel;
-
 	/* reset state buffer */
 	memzero_explicit(state->sctx, HSE_MAX_CTX_SIZE);
+
+	if (!state->streaming_mode)
+		goto out_free_state;
 
 	/* save hardware state */
 	sctx_dma = dma_map_single(alg->dev, state->sctx, HSE_MAX_CTX_SIZE,
 				  DMA_FROM_DEVICE);
 	if (unlikely(dma_mapping_error(alg->dev, sctx_dma))) {
 		err = -ENOMEM;
-		goto out_release_channel;
+		goto out_free_state;
 	}
 
 	rctx->srv_desc.srv_id = HSE_SRV_ID_IMPORT_EXPORT_STREAM_CTX;
@@ -722,10 +729,17 @@ static int hse_ahash_export(struct ahash_request *req, void *out)
 			__func__, crypto_ahash_alg_name(tfm), err);
 
 	dma_unmap_single(alg->dev, sctx_dma, HSE_MAX_CTX_SIZE, DMA_FROM_DEVICE);
+
+out_free_state:
+	memcpy(out, state, sizeof(*state));
+	kfree(state);
 out_release_channel:
 	hse_channel_release(alg->dev, rctx->channel);
-	dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen, DMA_TO_DEVICE);
-	kfree(rctx->buf);
+	if (rctx->buflen) {
+		dma_unmap_single(alg->dev, rctx->buf_dma, rctx->buflen,
+				 DMA_TO_DEVICE);
+		kfree(rctx->buf);
+	}
 	rctx->buflen = 0;
 	return err;
 }
@@ -740,24 +754,17 @@ static int hse_ahash_import(struct ahash_request *req, const void *in)
 	struct hse_ahash_req_ctx *rctx = ahash_request_ctx(req);
 	struct crypto_ahash *tfm = crypto_ahash_reqtfm(req);
 	struct hse_ahash_alg *alg = hse_ahash_get_alg(tfm);
-	unsigned int blocksize = crypto_ahash_blocksize(tfm);
-	struct hse_ahash_state *state = (void *)in;
+	struct hse_ahash_state *state;
 	dma_addr_t sctx_dma;
 	int err;
 
 	if (unlikely(!in))
 		return -EINVAL;
 
-	rctx->buf = kzalloc(blocksize, GFP_KERNEL);
-	if (IS_ERR_OR_NULL(rctx->buf))
+	/* alloc state buffer in DMAable area */
+	state = kmemdup(in, sizeof(*state), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(state))
 		return -ENOMEM;
-	rctx->buf_dma = dma_map_single(alg->dev, rctx->buf, blocksize,
-				       DMA_TO_DEVICE);
-	if (unlikely(dma_mapping_error(alg->dev, rctx->buf_dma))) {
-		err = -ENOMEM;
-		goto err_free_buf;
-	}
-	rctx->buflen = blocksize;
 
 	/* restore block-sized cache */
 	memcpy(rctx->cache, state->cache, state->cache_idx);
@@ -767,10 +774,14 @@ static int hse_ahash_import(struct ahash_request *req, const void *in)
 	err = hse_channel_acquire(alg->dev, HSE_CH_TYPE_STREAM, &rctx->channel,
 				  &rctx->stream);
 	if (err)
-		goto err_unmap_buf;
+		goto err_free_state;
 
-	if (!state->streaming_mode)
+	rctx->buflen = 0;
+
+	if (!state->streaming_mode) {
+		kfree(state);
 		return 0;
+	}
 
 	/* restore hardware state */
 	sctx_dma = dma_map_single(alg->dev, state->sctx, HSE_MAX_CTX_SIZE,
@@ -793,17 +804,15 @@ static int hse_ahash_import(struct ahash_request *req, const void *in)
 	}
 
 	dma_unmap_single(alg->dev, sctx_dma, HSE_MAX_CTX_SIZE, DMA_TO_DEVICE);
+	kfree(state);
 
 	return 0;
 err_unmap_sctx:
 	dma_unmap_single(alg->dev, sctx_dma, HSE_MAX_CTX_SIZE, DMA_TO_DEVICE);
 err_release_channel:
 	hse_channel_release(alg->dev, rctx->channel);
-err_unmap_buf:
-	dma_unmap_single(alg->dev, rctx->buf_dma, blocksize, DMA_TO_DEVICE);
-err_free_buf:
-	kfree(rctx->buf);
-	rctx->buflen = 0;
+err_free_state:
+	kfree(state);
 	return err;
 }
 
@@ -994,16 +1003,6 @@ static void hse_ahash_cra_exit(struct crypto_tfm *_tfm)
 
 static const struct hse_ahash_tpl hse_ahash_algs_tpl[] = {
 	{
-		.hash_name = "md5",
-		.hash_drv = "md5-hse",
-		.hmac_name = "hmac(md5)",
-		.hmac_drv = "hmac-md5-hse",
-		.blocksize = MD5_BLOCK_WORDS * 4,
-		.ahash_tpl.halg = {
-			.digestsize = MD5_DIGEST_SIZE,
-		},
-		.alg_type = HSE_HASH_ALGO_MD5,
-	}, {
 		.hash_name = "sha1",
 		.hash_drv = "sha1-hse",
 		.hmac_name = "hmac(sha1)",
