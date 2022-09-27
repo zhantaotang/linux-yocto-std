@@ -617,7 +617,7 @@ static void disable_operators(struct fsl_qspi *q,
 static int memory_enable_ddr(struct fsl_qspi *q)
 {
 	u8 wren_cfg, rdcr2_cfg, rdsr_cfg, wrcr2_cfg;
-	u8 cfg2_reg = 0x0;
+	u32 cfg2_reg = 0x0;
 	u8 status = 0;
 	u32 mcr2;
 	void __iomem *base = q->iobase;
@@ -859,6 +859,10 @@ static int enable_ddr(struct fsl_qspi *q)
 
 	mcr |= ddr_config.mcr;
 	qspi_writel(q, mcr, base + QUADSPI_MCR);
+
+	if (is_s32g3_qspi(q))
+		ddr_config.smpr = QUADSPI_SMPR_DLLFSMPFA_NTH(3) |
+			QUADSPI_SMPR_DLLFSMPFB_NTH(3);
 
 	qspi_writel(q, ddr_config.flshcr, base + QUADSPI_FLSHCR);
 	qspi_writel(q, ddr_config.sfacr, base + QUADSPI_SFACR);
