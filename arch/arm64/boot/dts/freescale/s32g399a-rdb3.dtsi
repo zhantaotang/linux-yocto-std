@@ -20,7 +20,6 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <8>;
-		status="disabled";
 	};
 };
 
