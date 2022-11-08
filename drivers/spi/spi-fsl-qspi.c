@@ -99,7 +99,7 @@ static const struct fsl_qspi_devtype_data ls2080a_data = {
 static const struct fsl_qspi_devtype_data s32gen1_data = {
 	.rxfifo = SZ_128,
 	.txfifo = SZ_256,
-	.ahb_buf_size = SZ_64M,
+	.ahb_buf_size = SZ_1K,
 	.quirks = 0,
 	.little_endian = true,
 };
@@ -107,7 +107,7 @@ static const struct fsl_qspi_devtype_data s32gen1_data = {
 static const struct fsl_qspi_devtype_data s32g3_data = {
 	.rxfifo = SZ_128,
 	.txfifo = SZ_256,
-	.ahb_buf_size = SZ_64M,
+	.ahb_buf_size = SZ_1K,
 	.quirks = 0,
 	.little_endian = true,
 };
