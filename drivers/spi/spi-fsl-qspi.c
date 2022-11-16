@@ -761,8 +761,12 @@ static int fsl_qspi_probe(struct platform_device *pdev)
 	}
 	q->memmap_phy = res->start;
 	/* Since there are 4 cs, map size required is 4 times ahb_buf_size */
-	q->ahb_addr = devm_ioremap(dev, q->memmap_phy,
-				   (q->devtype_data->ahb_buf_size * 4));
+	if (is_s32gen1_qspi(q))
+               q->ahb_addr = devm_ioremap(dev, q->memmap_phy,
+                                          res->end - res->start);
+	else
+               q->ahb_addr = devm_ioremap(dev, q->memmap_phy,
+                               (q->devtype_data->ahb_buf_size * 4));
 	if (!q->ahb_addr) {
 		ret = -ENOMEM;
 		goto err_put_ctrl;
