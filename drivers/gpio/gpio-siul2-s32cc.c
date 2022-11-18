@@ -33,6 +33,7 @@
 #include <linux/bitmap.h>
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
+#include <linux/types.h>
 
 #define SIUL2_PGPDO(N)		(((N) ^ 1) * 2)
 #define SIUL2_EIRQ_REG(r)	((r) * 4)
@@ -243,7 +244,7 @@ static int siul2_gpio_dir_in(struct gpio_chip *chip, unsigned int gpio)
 }
 
 static int siul2_irq_gpio_index(const struct siul2_device_data *platdata,
-				unsigned int gpio)
+				irq_hw_number_t gpio)
 {
 	int i;
 
@@ -353,7 +354,7 @@ static int siul2_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 	struct siul2_gpio_dev *gpio_dev = to_siul2_gpio_dev(gc);
 	const struct siul2_device_data *platdata = gpio_dev->platdata;
 	unsigned int irq_type = type & IRQ_TYPE_SENSE_MASK;
-	int gpio = irqd_to_hwirq(d);
+	irq_hw_number_t gpio = irqd_to_hwirq(d);
 	int index;
 	int ret = 0;
 	u32 mask;
@@ -444,7 +445,7 @@ static void siul2_gpio_irq_unmask(struct irq_data *data)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(data);
 	struct siul2_gpio_dev *gpio_dev = to_siul2_gpio_dev(gc);
 	const struct siul2_device_data *platdata = gpio_dev->platdata;
-	int gpio = irqd_to_hwirq(data);
+	irq_hw_number_t gpio = irqd_to_hwirq(data);
 	int index = siul2_irq_gpio_index(platdata, gpio);
 	unsigned long flags;
 	u32 mask;
@@ -483,7 +484,7 @@ static void siul2_gpio_irq_mask(struct irq_data *data)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(data);
 	struct siul2_gpio_dev *gpio_dev = to_siul2_gpio_dev(gc);
 	const struct siul2_device_data *platdata = gpio_dev->platdata;
-	int gpio = irqd_to_hwirq(data);
+	irq_hw_number_t gpio = irqd_to_hwirq(data);
 	unsigned long flags;
 	int index;
 	u32 mask;
