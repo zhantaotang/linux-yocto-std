@@ -12,6 +12,7 @@
 #include <dt-bindings/clock/s32gen1-scmi-clock.h>
 #include <dt-bindings/misc/s32-fccu.h>
 #include <dt-bindings/nvmem/s32-siul2-nvmem.h>
+#include <dt-bindings/perf/s32gen1-scmi-perf.h>
 #include <dt-bindings/phy/phy-s32gen1-serdes.h>
 #include <dt-bindings/phy/phy.h>
 #include <dt-bindings/reset/s32gen1-scmi-reset.h>
@@ -38,6 +39,8 @@
 
 		clks = &clks;
 		reset = &reset;
+
+		gmac0 = &gmac0;
 
 		pci0 = &pcie0;
 		pci1 = &pcie1;
@@ -80,7 +83,7 @@
 
 		hse_reserved: shm@84000000 {
 			compatible = "nxp,s32cc-hse-rmem";
-			reg = <0x0 0x84000000 0x0 0x80000>;	/* 512k */
+			reg = <0x0 0x84000000 0x0 0x400000>;	/* 4 MB */
 			no-map;
 		};
 	};
@@ -94,6 +97,11 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "okay";
+
+			dfs: protocol@13 {
+				reg = <0x13>;
+				#clock-cells = <1>;
+			};
 
 			clks: protocol@14 {
 				reg = <0x14>;
@@ -143,6 +151,7 @@
 			compatible = "arm,cortex-a53";
 			reg = <0x0>;
 			enable-method = "psci";
+			clocks = <&dfs S32GEN1_SCMI_PERF_A53>;
 			next-level-cache = <&cluster0_l2_cache>;
 		};
 
@@ -151,6 +160,7 @@
 			compatible = "arm,cortex-a53";
 			reg = <0x1>;
 			enable-method = "psci";
+			clocks = <&dfs S32GEN1_SCMI_PERF_A53>;
 			next-level-cache = <&cluster0_l2_cache>;
 		};
 
@@ -159,6 +169,7 @@
 			compatible = "arm,cortex-a53";
 			reg = <0x100>;
 			enable-method = "psci";
+			clocks = <&dfs S32GEN1_SCMI_PERF_A53>;
 			next-level-cache = <&cluster1_l2_cache>;
 		};
 
@@ -167,6 +178,7 @@
 			compatible = "arm,cortex-a53";
 			reg = <0x101>;
 			enable-method = "psci";
+			clocks = <&dfs S32GEN1_SCMI_PERF_A53>;
 			next-level-cache = <&cluster1_l2_cache>;
 		};
 
