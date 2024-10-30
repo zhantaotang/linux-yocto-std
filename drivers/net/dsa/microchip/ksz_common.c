@@ -3423,6 +3423,23 @@ static int ksz_setup_tc(struct dsa_switch *ds, int port,
 	}
 }
 
+static int ksz_suspend(struct dsa_switch *ds)
+{
+	struct ksz_device *dev = ds->priv;
+
+	cancel_delayed_work_sync(&dev->mib_read);
+	return 0;
+}
+
+static int ksz_resume(struct dsa_switch *ds)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (dev->mib_read_interval)
+		schedule_delayed_work(&dev->mib_read, dev->mib_read_interval);
+	return 0;
+}
+
 static const struct dsa_switch_ops ksz_switch_ops = {
 	.get_tag_protocol	= ksz_get_tag_protocol,
 	.connect_tag_protocol   = ksz_connect_tag_protocol,
@@ -3435,6 +3452,8 @@ static const struct dsa_switch_ops ksz_switch_ops = {
 	.phylink_mac_config	= ksz_phylink_mac_config,
 	.phylink_mac_link_up	= ksz_phylink_mac_link_up,
 	.phylink_mac_link_down	= ksz_mac_link_down,
+	.suspend		= ksz_suspend,
+	.resume			= ksz_resume,
 	.port_enable		= ksz_enable_port,
 	.set_ageing_time	= ksz_set_ageing_time,
 	.get_strings		= ksz_get_strings,
@@ -3681,6 +3700,24 @@ void ksz_switch_remove(struct ksz_device *dev)
 
 }
 EXPORT_SYMBOL(ksz_switch_remove);
+
+#ifdef CONFIG_PM_SLEEP
+int ksz_switch_suspend(struct device *dev)
+{
+	struct ksz_device *priv = dev_get_drvdata(dev);
+
+	return dsa_switch_suspend(priv->ds);
+}
+EXPORT_SYMBOL(ksz_switch_suspend);
+
+int ksz_switch_resume(struct device *dev)
+{
+	struct ksz_device *priv = dev_get_drvdata(dev);
+
+	return dsa_switch_resume(priv->ds);
+}
+EXPORT_SYMBOL(ksz_switch_resume);
+#endif
 
 MODULE_AUTHOR("Woojung Huh <Woojung.Huh@microchip.com>");
 MODULE_DESCRIPTION("Microchip KSZ Series Switch DSA Driver");

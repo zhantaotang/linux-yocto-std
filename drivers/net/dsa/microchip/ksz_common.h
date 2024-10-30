@@ -374,6 +374,8 @@ struct ksz_dev_ops {
 struct ksz_device *ksz_switch_alloc(struct device *base, void *priv);
 int ksz_switch_register(struct ksz_device *dev);
 void ksz_switch_remove(struct ksz_device *dev);
+int ksz_switch_suspend(struct device *dev);
+int ksz_switch_resume(struct device *dev);
 
 void ksz_init_mib_timer(struct ksz_device *dev);
 void ksz_r_mib_stats64(struct ksz_device *dev, int port);
