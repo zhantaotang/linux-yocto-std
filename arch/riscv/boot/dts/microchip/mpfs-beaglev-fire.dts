@@ -126,13 +126,6 @@
 			  "", "", "", "", "", "SD_CARD_CS", "USER_BUTTON";
 	status = "okay";
 
-	sd-card-cs-hog {
-		gpio-hog;
-		gpios = <12 12>;
-		output-high;
-		line-name = "SD_CARD_CS";
-	};
-
 	user-button-hog {
 		gpio-hog;
 		gpios = <13 13>;
@@ -179,13 +172,6 @@
 		gpios = <30 30>;
 		output-high;
 		line-name = "VIO_ENABLE";
-	};
-
-	sd-det-hog {
-		gpio-hog;
-		gpios = <31 31>;
-		input;
-		line-name = "SD_DET";
 	};
 };
 
