@@ -46,9 +46,7 @@ static const struct regmap_config syscon_regmap_config = {
 
 static void syscon_add(struct syscon *syscon)
 {
-	mutex_lock(&syscon_list_lock);
 	list_add_tail(&syscon->list, &syscon_list);
-	mutex_unlock(&syscon_list_lock);
 }
 
 static struct syscon *of_syscon_register_mmio(struct device_node *np,
@@ -154,8 +152,6 @@ static struct syscon *of_syscon_register_mmio(struct device_node *np,
 
 	syscon->regmap = regmap;
 	syscon->np = np;
-
-	list_add_tail(&syscon->list, &syscon_list);
 
 	return_ptr(syscon);
 
